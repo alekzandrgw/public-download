@@ -38,7 +38,7 @@ warning() {
 }
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} ${1:-}"
 }
 
 prompt() {
