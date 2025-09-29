@@ -311,11 +311,11 @@ collect_configuration() {
     echo "Database charset: $detected_charset"
     echo
     
-    prompt "Customize site URL? Press Enter to accept [$detected_url]: "
+    prompt "Customize destination forder name? Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
     
-    prompt "Customize database charset? Press Enter to accept [$detected_charset]: "
+    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
