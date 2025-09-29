@@ -263,7 +263,8 @@ check_disk_space() {
     
     # Display sizes
     echo
-    info "=== Disk Space Analysis ==="
+    info ""
+    echo "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
     echo "Database size (est.): $(numfmt --to=iec $db_size)"
     echo "Total backup size: $(numfmt --to=iec $total_size)"
@@ -316,7 +317,8 @@ check_disk_space() {
 
 collect_configuration() {
     echo
-    info "=== WordPress S3 Backup Configuration ==="
+    info ""
+    echo "=== WordPress S3 Backup Configuration ==="
     echo
     
     # WordPress Configuration (ask first to get site URL for region detection)
@@ -377,7 +379,8 @@ collect_configuration() {
     
     # Display configuration summary
     echo
-    info "=== Configuration Summary ==="
+    info ""
+    echo "=== Configuration Summary ==="
     echo "WordPress Root: $WEBROOT"
     echo "Site URL: $SITE_URL"
     echo "Database charset: $DB_CHARSET"
@@ -527,17 +530,18 @@ create_archive() {
             if [[ -f ROOT.tar.gz ]]; then
                 local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
                 local human_size=$(numfmt --to=iec $current_size 2>/dev/null || echo "0")
-                printf "\r${MAGENTA}Compressing files... Current size: ${human_size}${NC}"
+                printf "\r${MAGENTA}Compressing files... Current size: ${human_size}${NC}  "
             else
-                printf "\r${MAGENTA}Compressing files... Initializing...${NC}"
+                printf "\r${MAGENTA}Compressing files... Initializing...${NC}               "
             fi
             sleep 5
         done
     ) &
     local progress_pid=$!
     
-    # Create archive with exclusions
-    if ! tar -czf ROOT.tar.gz \
+    # Create archive with exclusions - redirect stderr to a temp file for debugging
+    local tar_error=$(mktemp)
+    tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
         --exclude='ROOT/wp-content/backups-dup-pro' \
@@ -556,21 +560,40 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null; then
-        # Kill progress indicator
-        kill $progress_pid 2>/dev/null
-        wait $progress_pid 2>/dev/null
-        printf "\r\033[K"  # Clear the line
-        error "Failed to create archive"
-        exit 1
-    fi
+        ROOT 2>"$tar_error"
+    
+    local tar_exit_code=$?
     
     # Kill progress indicator
     kill $progress_pid 2>/dev/null
     wait $progress_pid 2>/dev/null
     printf "\r\033[K"  # Clear the line
     
+    # Check if tar succeeded
+    if [[ $tar_exit_code -ne 0 ]]; then
+        error "Failed to create archive"
+        if [[ -s "$tar_error" ]]; then
+            error "Tar error output:"
+            cat "$tar_error" >&2
+        fi
+        rm -f "$tar_error"
+        exit 1
+    fi
+    
+    rm -f "$tar_error"
+    
+    # Verify archive was created and has content
+    if [[ ! -f ROOT.tar.gz ]]; then
+        error "Archive file was not created"
+        exit 1
+    fi
+    
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+    if [[ $archive_size -eq 0 ]]; then
+        error "Archive file is empty"
+        exit 1
+    fi
+    
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
@@ -652,9 +675,9 @@ verify_backup() {
 }
 
 display_summary() {
-    echo
+    info
     echo "==============================================================="
-    info "              *** BACKUP COMPLETED SUCCESSFULLY ***"
+    echo "              *** BACKUP COMPLETED SUCCESSFULLY ***"
     echo "==============================================================="
     echo
     echo ">> Backup Details:"
@@ -671,9 +694,9 @@ display_summary() {
 }
 
 main() {
-    echo
+    info
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.1"
+    echo "         WordPress S3 Backup Script v2.1"
     echo "==============================================================="
     echo
     
