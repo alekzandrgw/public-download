@@ -342,10 +342,16 @@ collect_configuration() {
     success "WordPress installation detected"
     echo
     
+    # Detect suggested AWS region and bucket based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
+    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
+    
     # Display detected values and allow customization
     info "Detected WordPress Information:"
     echo "Site URL: $detected_url"
     echo "Database charset: $detected_charset"
+    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
+    echo "Suggested S3 Bucket: $suggested_bucket"
     echo
     
     prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
@@ -357,9 +363,9 @@ collect_configuration() {
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
     echo
-    
-    # Detect suggested AWS region based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
+    info "** Note: You'll need AWS credentials for region: $(get_region_name $suggested_region) ($suggested_region)"
+    info "** Please retrieve your Access Key ID and Secret Access Key before proceeding."
+    echo
     
     # AWS Configuration
     info "AWS Configuration:"
