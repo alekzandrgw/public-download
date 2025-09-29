@@ -118,6 +118,16 @@ detect_aws_region() {
     fi
 }
 
+# Get bucket name based on region
+get_bucket_for_region() {
+    case "$1" in
+        eu-west-1) echo "staging-site-backups-euwest" ;;
+        us-east-1) echo "staging-site-backups-useast" ;;
+        us-west-2) echo "staging-site-backups-uswest" ;;
+        *) echo "" ;;
+    esac
+}
+
 # Get human-readable region name
 get_region_name() {
     case "$1" in
@@ -128,21 +138,23 @@ get_region_name() {
     esac
 }
 
-# Select AWS region interactively
-select_aws_region() {
+# Select AWS region and bucket interactively
+select_region_and_bucket() {
     local default_region="$1"
+    local default_bucket=$(get_bucket_for_region "$default_region")
     
     echo
-    info "Available AWS Regions:"
-    echo "  1) Europe (Ireland) - eu-west-1"
-    echo "  2) US East (N. Virginia) - us-east-1"
-    echo "  3) US West (Oregon) - us-west-2"
+    info "Available S3 Backup Locations:"
+    echo "  1) Europe (Ireland) - eu-west-1 → staging-site-backups-euwest"
+    echo "  2) US East (N. Virginia) - us-east-1 → staging-site-backups-useast"
+    echo "  3) US West (Oregon) - us-west-2 → staging-site-backups-uswest"
+    echo "  4) Custom (enter your own region and bucket)"
     echo
     
-    if [[ -n "$default_region" ]]; then
-        prompt "Select region [default: $(get_region_name $default_region) - $default_region]: "
+    if [[ -n "$default_region" ]] && [[ -n "$default_bucket" ]]; then
+        prompt "Select backup location [detected: $(get_region_name $default_region) - Press Enter to accept]: "
     else
-        prompt "Select region (1-3) or enter custom region code: "
+        prompt "Select backup location (1-4): "
     fi
     
     read region_input
@@ -150,22 +162,47 @@ select_aws_region() {
     # If empty and default exists, use default
     if [[ -z "$region_input" ]] && [[ -n "$default_region" ]]; then
         AWS_REGION="$default_region"
+        S3_BUCKET="$default_bucket"
         return
     fi
     
-    # Map number to region
+    # Map number to region and bucket
     case "$region_input" in
-        1) AWS_REGION="eu-west-1" ;;
-        2) AWS_REGION="us-east-1" ;;
-        3) AWS_REGION="us-west-2" ;;
-        eu-west-1|us-east-1|us-west-2) AWS_REGION="$region_input" ;;
-        *)
-            if [[ "$region_input" =~ ^[a-z]{2,3}-[a-z]+-[0-9]$ ]]; then
-                AWS_REGION="$region_input"
-            else
-                error "Invalid region. Using default: $default_region"
+        1) 
+            AWS_REGION="eu-west-1"
+            S3_BUCKET="staging-site-backups-euwest"
+            ;;
+        2) 
+            AWS_REGION="us-east-1"
+            S3_BUCKET="staging-site-backups-useast"
+            ;;
+        3) 
+            AWS_REGION="us-west-2"
+            S3_BUCKET="staging-site-backups-uswest"
+            ;;
+        4)
+            # Custom region and bucket
+            prompt "Enter custom AWS region (e.g., eu-west-1): "
+            read custom_region
+            if [[ ! "$custom_region" =~ ^[a-z]{2,3}-[a-z]+-[0-9]$ ]]; then
+                error "Invalid region format. Using default: $default_region"
                 AWS_REGION="$default_region"
+                S3_BUCKET="$default_bucket"
+            else
+                AWS_REGION="$custom_region"
+                read_input "Enter custom S3 bucket name: " "S3_BUCKET" "false" "validate_s3_bucket"
             fi
+            ;;
+        "")
+            # Empty input with no default
+            error "No selection made. Using default: $default_region"
+            AWS_REGION="$default_region"
+            S3_BUCKET="$default_bucket"
+            ;;
+        *)
+            error "Invalid selection. Using default: $default_region"
+            AWS_REGION="$default_region"
+            S3_BUCKET="$default_bucket"
             ;;
     esac
 }
@@ -311,11 +348,11 @@ collect_configuration() {
     echo "Database charset: $detected_charset"
     echo
     
-    prompt "Customize site URL? Press Enter to accept [$detected_url]: "
+    prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
     
-    prompt "Customize database charset? Press Enter to accept [$detected_charset]: "
+    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
@@ -329,12 +366,8 @@ collect_configuration() {
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
     
-    # Region selection with smart default
-    select_aws_region "$suggested_region"
-    
-    # Bucket selection with smart default based on selected region
-    local suggested_bucket=$(get_bucket_for_region "$AWS_REGION")
-    select_s3_bucket "$suggested_bucket"
+    # Region and bucket selection with smart default
+    select_region_and_bucket "$suggested_region"
     
     # Display configuration summary
     echo
@@ -612,7 +645,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.0"
+    info "         WordPress S3 Backup Script v2.1"
     echo "==============================================================="
     echo
     
