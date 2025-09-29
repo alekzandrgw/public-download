@@ -106,11 +106,11 @@ detect_aws_region() {
     local url="$1"
     
     # Check for region indicators in URL
-    if [[ "$url" =~ ew1 ]]; then
+    if [[ "$url" =~ eu-west|ireland|dublin|europe ]]; then
         echo "eu-west-1"
-    elif [[ "$url" =~ ue1 ]]; then
+    elif [[ "$url" =~ us-east|virginia|east ]]; then
         echo "us-east-1"
-    elif [[ "$url" =~ uw2 ]]; then
+    elif [[ "$url" =~ us-west|oregon|west ]]; then
         echo "us-west-2"
     else
         # Default to us-east-1 if no match
@@ -140,7 +140,7 @@ select_aws_region() {
     echo
     
     if [[ -n "$default_region" ]]; then
-        prompt "Select region [default: $(get_region_name $default_region) - $default_region]: "
+        prompt "Select region [detected: $(get_region_name $default_region) - $default_region]: "
     else
         prompt "Select region (1-3) or enter custom region code: "
     fi
@@ -199,8 +199,23 @@ check_disk_space() {
     # Get database size estimate (current size of database)
     local db_size=0
     if "$WP_CLI" db size --allow-root --skip-plugins --skip-themes --quiet &>/dev/null; then
-        db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -oP '\d+' | head -1 || echo "0")
-        db_size=$((db_size * 1024 * 1024))  # Convert MB to bytes
+        # Get the output and parse the size value (could be in B, KB, MB, GB)
+        local db_output=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes 2>/dev/null | grep -oP '\|\s+\K[0-9]+\s+[BKMGT]' | head -1)
+        
+        if [[ -n "$db_output" ]]; then
+            local size_value=$(echo "$db_output" | awk '{print $1}')
+            local size_unit=$(echo "$db_output" | awk '{print $2}')
+            
+            # Convert to bytes based on unit
+            case "$size_unit" in
+                B) db_size=$size_value ;;
+                K|KB) db_size=$((size_value * 1024)) ;;
+                M|MB) db_size=$((size_value * 1024 * 1024)) ;;
+                G|GB) db_size=$((size_value * 1024 * 1024 * 1024)) ;;
+                T|TB) db_size=$((size_value * 1024 * 1024 * 1024 * 1024)) ;;
+                *) db_size=0 ;;
+            esac
+        fi
     fi
     
     local total_size=$((root_size + db_size))
