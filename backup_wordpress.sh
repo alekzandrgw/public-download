@@ -140,7 +140,7 @@ select_aws_region() {
     echo
     
     if [[ -n "$default_region" ]]; then
-        prompt "Select region [detected: $(get_region_name $default_region) - $default_region]: "
+        prompt "Select region [default: $(get_region_name $default_region) - $default_region]: "
     else
         prompt "Select region (1-3) or enter custom region code: "
     fi
@@ -311,11 +311,11 @@ collect_configuration() {
     echo "Database charset: $detected_charset"
     echo
     
-    prompt "Customize destination forder name? Press Enter to accept [Detected: $detected_url]: "
+    prompt "Customize site URL? Press Enter to accept [$detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
     
-    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
+    prompt "Customize database charset? Press Enter to accept [$detected_charset]: "
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
@@ -332,7 +332,9 @@ collect_configuration() {
     # Region selection with smart default
     select_aws_region "$suggested_region"
     
-    read_input "Enter S3 Bucket Name: " "S3_BUCKET" "false" "validate_s3_bucket"
+    # Bucket selection with smart default based on selected region
+    local suggested_bucket=$(get_bucket_for_region "$AWS_REGION")
+    select_s3_bucket "$suggested_bucket"
     
     # Display configuration summary
     echo
