@@ -22,6 +22,7 @@ WEBROOT=""
 SITE_URL=""
 DB_CHARSET=""
 TEMP_FILES=""
+WP_CLI="/home/litespeed/bin/wp"
 
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
@@ -49,6 +50,7 @@ read_input() {
     local variable_name="$2"
     local is_secret="${3:-false}"
     local validation_func="${4:-}"
+    local allow_empty="${5:-false}"
     
     while true; do
         if [[ "$is_secret" == "true" ]]; then
@@ -60,13 +62,13 @@ read_input() {
             read input
         fi
         
-        if [[ -z "$input" ]]; then
+        if [[ -z "$input" ]] && [[ "$allow_empty" != "true" ]]; then
             error "This field cannot be empty. Please try again."
             continue
         fi
         
-        # Run validation function if provided
-        if [[ -n "$validation_func" ]] && ! $validation_func "$input"; then
+        # Run validation function if provided (only if input is not empty)
+        if [[ -n "$input" ]] && [[ -n "$validation_func" ]] && ! $validation_func "$input"; then
             continue
         fi
         
@@ -120,7 +122,7 @@ collect_configuration() {
     
     echo
     info "WordPress Configuration:"
-    read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input"
+    read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
     WEBROOT="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WEBROOT" || exit 1
     
@@ -185,6 +187,11 @@ check_prerequisites() {
         exit 1
     fi
     
+    if [[ ! -f "$WP_CLI" ]]; then
+        error "WP-CLI not found at $WP_CLI"
+        exit 1
+    fi
+    
     log "Prerequisites check passed"
 }
 
@@ -207,13 +214,20 @@ setup_rclone() {
         env_auth false \
         access_key_id "$AWS_ACCESS_KEY" \
         secret_access_key "$AWS_SECRET_KEY" \
-        region "$AWS_REGION"
+        region "$AWS_REGION" \
+        location_constraint "$AWS_REGION"
     
-    # Test connection
-    log "Testing S3 connection..."
+    # Test connection and check if bucket exists
+    log "Testing S3 connection and bucket access..."
     if ! rclone lsd myaws:$S3_BUCKET >/dev/null 2>&1; then
-        error "Failed to connect to S3 bucket '$S3_BUCKET'"
-        error "Please check your AWS credentials and bucket name"
+        error "Failed to access S3 bucket '$S3_BUCKET'"
+        error "Please ensure:"
+        error "  1. The bucket exists in your AWS account"
+        error "  2. Your AWS credentials have access to this bucket"
+        error "  3. The bucket is in the correct region ($AWS_REGION)"
+        error ""
+        error "To create the bucket manually, run:"
+        error "  aws s3 mb s3://$S3_BUCKET --region $AWS_REGION"
         exit 1
     fi
     
@@ -230,14 +244,14 @@ get_wordpress_info() {
     }
     
     # Check if WordPress is installed
-    if ! wp core is-installed --allow-root --skip-plugins --skip-themes --quiet; then
+    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet; then
         error "WordPress not installed in '$WEBROOT'"
         exit 1
     fi
     
     # Get site URL and charset
-    SITE_URL=$(wp option get siteurl --allow-root --skip-plugins --skip-themes --quiet | sed 's|https\?://||')
-    DB_CHARSET=$(wp eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet | tr -d '\n')
+    SITE_URL=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet | sed 's|https\?://||')
+    DB_CHARSET=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet | tr -d '\n')
     
     if [[ -z "$SITE_URL" ]] || [[ -z "$DB_CHARSET" ]]; then
         error "Failed to get WordPress information"
@@ -258,7 +272,7 @@ export_database() {
     }
     
     # Export database
-    if ! wp db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet; then
+    if ! "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet; then
         error "Database export failed"
         exit 1
     fi
@@ -295,8 +309,10 @@ create_archive() {
         --exclude='ROOT/wp-content/litespeed' \
         --exclude='ROOT/wp-content/debug.log' \
         --exclude='ROOT/wp-content/error_log' \
+        --exclude='ROOT/.htaccess.bak' \
         --exclude='ROOT/wp-config-backup.php' \
         --exclude='ROOT/error_log' \
+        --exclude='ROOT/wp-content/uploads/wc-logs' \
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
@@ -326,16 +342,16 @@ upload_to_s3() {
     info "Upload size: $(numfmt --to=iec $total_size)"
     info "Destination: s3://$S3_BUCKET/$SITE_URL/"
     
-    # Upload database file
+    # Upload database file with explicit no-check-bucket flag
     log "Uploading database export..."
-    if ! rclone copy stg-db-export.sql "myaws:$S3_BUCKET/$SITE_URL/" --progress; then
+    if ! rclone copy stg-db-export.sql "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
         error "Failed to upload database export"
         exit 1
     fi
     
-    # Upload website archive
+    # Upload website archive with explicit no-check-bucket flag
     log "Uploading website archive..."
-    if ! rclone copy ROOT.tar.gz "myaws:$S3_BUCKET/$SITE_URL/" --progress; then
+    if ! rclone copy ROOT.tar.gz "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
         error "Failed to upload website archive"
         exit 1
     fi
