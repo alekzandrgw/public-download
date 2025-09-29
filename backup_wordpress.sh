@@ -521,7 +521,20 @@ create_archive() {
         exit 1
     }
     
-    show_progress "Compressing files" 3
+    # Start spinner in background
+    echo -ne "${MAGENTA}Compressing files${NC}"
+    
+    # Spinner function
+    (
+        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local i=0
+        while true; do
+            printf "\r${MAGENTA}Compressing files ${spinner[$i]}${NC}"
+            i=$(( (i + 1) % 10 ))
+            sleep 0.1
+        done
+    ) &
+    local spinner_pid=$!
     
     # Create archive with exclusions
     if ! tar -czf ROOT.tar.gz \
@@ -544,9 +557,18 @@ create_archive() {
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
         ROOT 2>/dev/null; then
+        # Kill spinner
+        kill $spinner_pid 2>/dev/null
+        wait $spinner_pid 2>/dev/null
+        printf "\r\033[K"  # Clear the line
         error "Failed to create archive"
         exit 1
     fi
+    
+    # Kill spinner
+    kill $spinner_pid 2>/dev/null
+    wait $spinner_pid 2>/dev/null
+    printf "\r\033[K"  # Clear the line
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
