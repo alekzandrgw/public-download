@@ -11,6 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Global variables
@@ -42,6 +43,23 @@ info() {
 
 prompt() {
     echo -e "${CYAN}$1${NC}"
+}
+
+success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+# Progress animation
+show_progress() {
+    local message="$1"
+    local duration="${2:-2}"
+    
+    echo -ne "${MAGENTA}${message}${NC}"
+    for i in $(seq 1 $((duration * 2))); do
+        echo -n "."
+        sleep 0.5
+    done
+    echo " Done!"
 }
 
 # Function to read input with validation
@@ -78,17 +96,81 @@ read_input() {
     done
 }
 
-# Validation functions
-validate_aws_region() {
-    local region="$1"
-    # Basic AWS region format validation
-    if [[ ! "$region" =~ ^[a-z]{2,3}-[a-z]+-[0-9]$ ]]; then
-        error "Invalid AWS region format. Examples: us-west-2, eu-central-1, ap-southeast-1"
-        return 1
-    fi
-    return 0
+# Check if running in screen session
+is_in_screen() {
+    [[ -n "${STY:-}" ]] || [[ -n "${TMUX:-}" ]]
 }
 
+# Detect AWS region from site URL
+detect_aws_region() {
+    local url="$1"
+    
+    # Check for region indicators in URL
+    if [[ "$url" =~ ew1 ]]; then
+        echo "eu-west-1"
+    elif [[ "$url" =~ ue1 ]]; then
+        echo "us-east-1"
+    elif [[ "$url" =~ uw2 ]]; then
+        echo "us-west-2"
+    else
+        # Default to us-east-1 if no match
+        echo "us-east-1"
+    fi
+}
+
+# Get human-readable region name
+get_region_name() {
+    case "$1" in
+        eu-west-1) echo "Europe (Ireland)" ;;
+        us-east-1) echo "US East (N. Virginia)" ;;
+        us-west-2) echo "US West (Oregon)" ;;
+        *) echo "Unknown Region" ;;
+    esac
+}
+
+# Select AWS region interactively
+select_aws_region() {
+    local default_region="$1"
+    
+    echo
+    info "Available AWS Regions:"
+    echo "  1) Europe (Ireland) - eu-west-1"
+    echo "  2) US East (N. Virginia) - us-east-1"
+    echo "  3) US West (Oregon) - us-west-2"
+    echo
+    
+    if [[ -n "$default_region" ]]; then
+        prompt "Select region [default: $(get_region_name $default_region) - $default_region]: "
+    else
+        prompt "Select region (1-3) or enter custom region code: "
+    fi
+    
+    read region_input
+    
+    # If empty and default exists, use default
+    if [[ -z "$region_input" ]] && [[ -n "$default_region" ]]; then
+        AWS_REGION="$default_region"
+        return
+    fi
+    
+    # Map number to region
+    case "$region_input" in
+        1) AWS_REGION="eu-west-1" ;;
+        2) AWS_REGION="us-east-1" ;;
+        3) AWS_REGION="us-west-2" ;;
+        eu-west-1|us-east-1|us-west-2) AWS_REGION="$region_input" ;;
+        *)
+            if [[ "$region_input" =~ ^[a-z]{2,3}-[a-z]+-[0-9]$ ]]; then
+                AWS_REGION="$region_input"
+            else
+                error "Invalid region. Using default: $default_region"
+                AWS_REGION="$default_region"
+            fi
+            ;;
+    esac
+}
+
+# Validation functions
 validate_s3_bucket() {
     local bucket="$1"
     # Basic S3 bucket name validation
@@ -108,30 +190,143 @@ validate_directory() {
     return 0
 }
 
+check_disk_space() {
+    log "Analyzing disk space requirements..."
+    
+    # Get ROOT directory size
+    local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
+    
+    # Get database size estimate (current size of database)
+    local db_size=0
+    if "$WP_CLI" db size --allow-root --skip-plugins --skip-themes --quiet &>/dev/null; then
+        db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -oP '\d+' | head -1 || echo "0")
+        db_size=$((db_size * 1024 * 1024))  # Convert MB to bytes
+    fi
+    
+    local total_size=$((root_size + db_size))
+    local required_space=$((total_size * 110 / 100))  # Add 10% buffer
+    
+    # Get available space on the partition containing WEBROOT
+    local available_space=$(df -B1 "$WEBROOT/../" | awk 'NR==2 {print $4}')
+    
+    # Display sizes
+    echo
+    info "=== Disk Space Analysis ==="
+    echo "WordPress files size: $(numfmt --to=iec $root_size)"
+    echo "Database size (est.): $(numfmt --to=iec $db_size)"
+    echo "Total backup size: $(numfmt --to=iec $total_size)"
+    echo "Required space (with 10% buffer): $(numfmt --to=iec $required_space)"
+    echo "Available disk space: $(numfmt --to=iec $available_space)"
+    echo
+    
+    # Check if site is larger than 10GB
+    local ten_gb=$((10 * 1024 * 1024 * 1024))
+    if [[ $total_size -gt $ten_gb ]]; then
+        warning "*** Large site detected (>10GB)!"
+        
+        if ! is_in_screen; then
+            warning "You are NOT running in a screen/tmux session."
+            warning "For large backups, it's recommended to run this in screen to prevent interruption."
+            echo
+            prompt "Do you want to continue anyway? (y/N): "
+            read -r continue_anyway
+            if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+                error "Backup cancelled. Please run this script in a screen session:"
+                error "  screen -S backup"
+                error "  ./backup_wordpress.sh"
+                exit 1
+            fi
+        else
+            success "Running in screen/tmux session - good for large backups!"
+        fi
+    fi
+    
+    # Check if enough space is available
+    if [[ $available_space -lt $required_space ]]; then
+        local needed=$((required_space - available_space))
+        error "*** INSUFFICIENT DISK SPACE!"
+        error "You need $(numfmt --to=iec $needed) more disk space to safely complete this backup."
+        error ""
+        error "Please free up disk space or add more storage before proceeding."
+        echo
+        prompt "Do you want to continue anyway? (NOT RECOMMENDED) (y/N): "
+        read -r force_continue
+        if [[ ! "$force_continue" =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+        warning "Continuing with insufficient space - backup may fail!"
+    else
+        success "Sufficient disk space available"
+    fi
+    
+    show_progress "Preparing backup environment" 1
+}
+
 collect_configuration() {
     echo
     info "=== WordPress S3 Backup Configuration ==="
     echo
     
-    # AWS Configuration
-    info "AWS Configuration:"
-    read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
-    read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
-    read_input "Enter AWS Region (e.g., us-west-2): " "AWS_REGION" "false" "validate_aws_region"
-    read_input "Enter S3 Bucket Name: " "S3_BUCKET" "false" "validate_s3_bucket"
-    
-    echo
+    # WordPress Configuration (ask first to get site URL for region detection)
     info "WordPress Configuration:"
     read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
     WEBROOT="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WEBROOT" || exit 1
     
+    show_progress "Analyzing WordPress installation" 2
+    
+    # Get WordPress info early for better defaults
+    cd "$WEBROOT" || exit 1
+    
+    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
+        error "WordPress not installed in '$WEBROOT'"
+        exit 1
+    fi
+    
+    # Get site URL for region detection
+    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
+    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
+    
+    success "WordPress installation detected"
+    echo
+    
+    # Display detected values and allow customization
+    info "Detected WordPress Information:"
+    echo "Site URL: $detected_url"
+    echo "Database charset: $detected_charset"
+    echo
+    
+    prompt "Customize site URL? Press Enter to accept [$detected_url]: "
+    read custom_url
+    SITE_URL="${custom_url:-$detected_url}"
+    
+    prompt "Customize database charset? Press Enter to accept [$detected_charset]: "
+    read custom_charset
+    DB_CHARSET="${custom_charset:-$detected_charset}"
+    
+    echo
+    
+    # Detect suggested AWS region based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
+    
+    # AWS Configuration
+    info "AWS Configuration:"
+    read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
+    read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
+    
+    # Region selection with smart default
+    select_aws_region "$suggested_region"
+    
+    read_input "Enter S3 Bucket Name: " "S3_BUCKET" "false" "validate_s3_bucket"
+    
     # Display configuration summary
     echo
     info "=== Configuration Summary ==="
-    echo "AWS Region: $AWS_REGION"
-    echo "S3 Bucket: $S3_BUCKET"
     echo "WordPress Root: $WEBROOT"
+    echo "Site URL: $SITE_URL"
+    echo "Database charset: $DB_CHARSET"
+    echo "AWS Region: $(get_region_name $AWS_REGION) ($AWS_REGION)"
+    echo "S3 Bucket: $S3_BUCKET"
     echo
     
     # Confirm configuration
@@ -141,30 +336,34 @@ collect_configuration() {
         error "Configuration cancelled by user"
         exit 1
     fi
+    
+    show_progress "Validating configuration" 1
 }
 
 cleanup() {
+    echo
     log "Performing cleanup..."
     
     # Remove rclone config
     if rclone config show myaws >/dev/null 2>&1; then
         rclone config delete myaws
-        log "Removed rclone configuration"
+        success "Removed rclone configuration"
     fi
     
     # Clean up temporary files
     if [[ -n "$TEMP_FILES" ]]; then
         cd "$WEBROOT/../" && rm -f $TEMP_FILES 2>/dev/null || true
-        log "Removed temporary files: $TEMP_FILES"
+        success "Removed temporary files: $TEMP_FILES"
     fi
     
     # Remove rclone if it was installed by this script
     if command -v rclone &> /dev/null; then
+        echo
         prompt "Remove rclone from system? (y/N): "
         read -r remove_rclone
         if [[ "$remove_rclone" =~ ^[Yy]$ ]]; then
             yum remove -y rclone
-            log "Removed rclone from system"
+            success "Removed rclone from system"
         fi
     fi
     
@@ -192,18 +391,21 @@ check_prerequisites() {
         exit 1
     fi
     
-    log "Prerequisites check passed"
+    success "Prerequisites check passed"
+    show_progress "Initializing backup process" 1
 }
 
 install_rclone() {
-    log "Installing rclone..."
+    log "Checking rclone installation..."
     
     if command -v rclone &> /dev/null; then
-        warning "rclone is already installed"
+        success "rclone is already installed"
     else
-        yum install -y rclone
-        log "rclone installed successfully"
+        info "Installing rclone..."
+        yum install -y rclone >/dev/null 2>&1
+        success "rclone installed successfully"
     fi
+    show_progress "Configuring backup tools" 1
 }
 
 setup_rclone() {
@@ -215,51 +417,18 @@ setup_rclone() {
         access_key_id "$AWS_ACCESS_KEY" \
         secret_access_key "$AWS_SECRET_KEY" \
         region "$AWS_REGION" \
-        location_constraint "$AWS_REGION"
+        location_constraint "$AWS_REGION" >/dev/null 2>&1
     
-    # Test connection and check if bucket exists
-    log "Testing S3 connection and bucket access..."
+    # Test connection
+    info "Testing S3 connection..."
     if ! rclone lsd myaws:$S3_BUCKET >/dev/null 2>&1; then
-        error "Failed to access S3 bucket '$S3_BUCKET'"
-        error "Please ensure:"
-        error "  1. The bucket exists in your AWS account"
-        error "  2. Your AWS credentials have access to this bucket"
-        error "  3. The bucket is in the correct region ($AWS_REGION)"
-        error ""
-        error "To create the bucket manually, run:"
-        error "  aws s3 mb s3://$S3_BUCKET --region $AWS_REGION"
+        error "Failed to connect to S3 bucket '$S3_BUCKET'"
+        error "Please check your AWS credentials and bucket name"
         exit 1
     fi
     
-    log "rclone configuration completed successfully"
-}
-
-get_wordpress_info() {
-    log "Getting WordPress information..."
-    
-    # Change to WordPress directory
-    cd "$WEBROOT" || {
-        error "Failed to access WordPress directory '$WEBROOT'"
-        exit 1
-    }
-    
-    # Check if WordPress is installed
-    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet; then
-        error "WordPress not installed in '$WEBROOT'"
-        exit 1
-    fi
-    
-    # Get site URL and charset
-    SITE_URL=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet | sed 's|https\?://||')
-    DB_CHARSET=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet | tr -d '\n')
-    
-    if [[ -z "$SITE_URL" ]] || [[ -z "$DB_CHARSET" ]]; then
-        error "Failed to get WordPress information"
-        exit 1
-    fi
-    
-    log "Site URL: $SITE_URL"
-    log "Database charset: $DB_CHARSET"
+    success "S3 connection established successfully"
+    show_progress "Preparing remote storage" 1
 }
 
 export_database() {
@@ -271,6 +440,8 @@ export_database() {
         exit 1
     }
     
+    show_progress "Dumping database" 2
+    
     # Export database
     if ! "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet; then
         error "Database export failed"
@@ -278,7 +449,7 @@ export_database() {
     fi
     
     local db_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
-    log "Database exported successfully ($(numfmt --to=iec $db_size))"
+    success "Database exported successfully ($(numfmt --to=iec $db_size))"
 }
 
 create_archive() {
@@ -293,6 +464,8 @@ create_archive() {
         error "Failed to access parent directory of '$WEBROOT'"
         exit 1
     }
+    
+    show_progress "Compressing files" 3
     
     # Create archive with exclusions
     if ! tar -czf ROOT.tar.gz \
@@ -309,20 +482,18 @@ create_archive() {
         --exclude='ROOT/wp-content/litespeed' \
         --exclude='ROOT/wp-content/debug.log' \
         --exclude='ROOT/wp-content/error_log' \
-        --exclude='ROOT/.htaccess.bak' \
         --exclude='ROOT/wp-config-backup.php' \
         --exclude='ROOT/error_log' \
-        --exclude='ROOT/wp-content/uploads/wc-logs' \
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT; then
+        ROOT 2>/dev/null; then
         error "Failed to create archive"
         exit 1
     fi
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-    log "Website archive created successfully ($(numfmt --to=iec $archive_size))"
+    success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
 upload_to_s3() {
@@ -341,22 +512,27 @@ upload_to_s3() {
     
     info "Upload size: $(numfmt --to=iec $total_size)"
     info "Destination: s3://$S3_BUCKET/$SITE_URL/"
+    echo
     
-    # Upload database file with explicit no-check-bucket flag
+    # Upload database file
     log "Uploading database export..."
     if ! rclone copy stg-db-export.sql "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
         error "Failed to upload database export"
         exit 1
     fi
+    success "Database uploaded"
     
-    # Upload website archive with explicit no-check-bucket flag
+    echo
+    
+    # Upload website archive
     log "Uploading website archive..."
     if ! rclone copy ROOT.tar.gz "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
         error "Failed to upload website archive"
         exit 1
     fi
+    success "Archive uploaded"
     
-    log "All files uploaded successfully"
+    show_progress "Finalizing upload" 1
     
     # Set temp files for cleanup
     TEMP_FILES="ROOT.tar.gz stg-db-export.sql"
@@ -364,6 +540,8 @@ upload_to_s3() {
 
 verify_backup() {
     log "Verifying backup in S3..."
+    
+    show_progress "Checking remote files" 2
     
     # List files in S3 to verify
     local s3_files
@@ -385,40 +563,49 @@ verify_backup() {
         exit 1
     fi
     
+    echo
     info "Backup contents:"
     echo "$s3_files" | while read -r size file; do
-        echo "  - $file ($(numfmt --to=iec $size))"
+        echo "  [OK] $file ($(numfmt --to=iec $size))"
     done
     
-    log "Backup verification completed successfully"
+    echo
+    success "Backup verification completed successfully"
 }
 
 display_summary() {
     echo
-    info "=== Backup Summary ==="
-    echo "✅ WordPress site: $SITE_URL"
-    echo "✅ S3 Location: s3://$S3_BUCKET/$SITE_URL/"
-    echo "✅ Files uploaded:"
-    echo "   - ROOT.tar.gz (Website files)"
-    echo "   - stg-db-export.sql (Database export)"
-    echo "✅ Database charset: $DB_CHARSET"
+    echo "==============================================================="
+    info "              *** BACKUP COMPLETED SUCCESSFULLY ***"
+    echo "==============================================================="
     echo
-    log "WordPress backup completed successfully!"
+    echo ">> Backup Details:"
+    echo "   - WordPress site: $SITE_URL"
+    echo "   - S3 Location: s3://$S3_BUCKET/$SITE_URL/"
+    echo "   - Region: $(get_region_name $AWS_REGION) ($AWS_REGION)"
+    echo
+    echo ">> Files Uploaded:"
+    echo "   - ROOT.tar.gz (Website files)"
+    echo "   - stg-db-export.sql (Database - $DB_CHARSET charset)"
+    echo
+    echo "==============================================================="
     echo
 }
 
 main() {
     echo
-    info "=== WordPress S3 Backup Script ==="
+    echo "==============================================================="
+    info "         WordPress S3 Backup Script v2.0"
+    echo "==============================================================="
     echo
     
     collect_configuration
     echo
     
     check_prerequisites
+    check_disk_space
     install_rclone
     setup_rclone
-    get_wordpress_info
     export_database
     create_archive
     upload_to_s3
