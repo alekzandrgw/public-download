@@ -144,7 +144,8 @@ select_region_and_bucket() {
     local default_bucket=$(get_bucket_for_region "$default_region")
     
     echo
-    info "Available S3 Backup Locations:"
+    echo -e "${BLUE}[INFO]${NC}"
+    echo "Available S3 Backup Locations:"
     echo "  1) Europe (Ireland) - eu-west-1 → staging-site-backups-euwest"
     echo "  2) US East (N. Virginia) - us-east-1 → staging-site-backups-useast"
     echo "  3) US West (Oregon) - us-west-2 → staging-site-backups-uswest"
@@ -263,7 +264,7 @@ check_disk_space() {
     
     # Display sizes
     echo
-    info ""
+    echo -e "${BLUE}[INFO]${NC}"
     echo "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
     echo "Database size (est.): $(numfmt --to=iec $db_size)"
@@ -317,7 +318,7 @@ check_disk_space() {
 
 collect_configuration() {
     echo
-    info ""
+    echo -e "${BLUE}[INFO]${NC}"
     echo "=== WordPress S3 Backup Configuration ==="
     echo
     
@@ -379,7 +380,7 @@ collect_configuration() {
     
     # Display configuration summary
     echo
-    info ""
+    echo -e "${BLUE}[INFO]${NC}"
     echo "=== Configuration Summary ==="
     echo "WordPress Root: $WEBROOT"
     echo "Site URL: $SITE_URL"
@@ -665,7 +666,8 @@ verify_backup() {
     fi
     
     echo
-    info "Backup contents:"
+    echo -e "${BLUE}[INFO]${NC}"
+    echo "Backup contents:"
     echo "$s3_files" | while read -r size file; do
         echo "  [OK] $file ($(numfmt --to=iec $size))"
     done
@@ -675,7 +677,8 @@ verify_backup() {
 }
 
 display_summary() {
-    info
+    echo
+    echo -e "${BLUE}[INFO]${NC}"
     echo "==============================================================="
     echo "              *** BACKUP COMPLETED SUCCESSFULLY ***"
     echo "==============================================================="
@@ -694,7 +697,8 @@ display_summary() {
 }
 
 main() {
-    info
+    echo
+    echo -e "${BLUE}[INFO]${NC}"
     echo "==============================================================="
     echo "         WordPress S3 Backup Script v2.1"
     echo "==============================================================="
