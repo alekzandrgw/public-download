@@ -521,20 +521,20 @@ create_archive() {
         exit 1
     }
     
-    # Start spinner in background
-    echo -ne "${MAGENTA}Compressing files${NC}"
-    
-    # Spinner function
+    # Start progress indicator in background that shows growing archive size
     (
-        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local i=0
         while true; do
-            printf "\r${MAGENTA}Compressing files ${spinner[$i]}${NC}"
-            i=$(( (i + 1) % 10 ))
-            sleep 0.1
+            if [[ -f ROOT.tar.gz ]]; then
+                local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+                local human_size=$(numfmt --to=iec $current_size 2>/dev/null || echo "0")
+                printf "\r${MAGENTA}Compressing files... Current size: ${human_size}${NC}"
+            else
+                printf "\r${MAGENTA}Compressing files... Initializing...${NC}"
+            fi
+            sleep 5
         done
     ) &
-    local spinner_pid=$!
+    local progress_pid=$!
     
     # Create archive with exclusions
     if ! tar -czf ROOT.tar.gz \
@@ -557,17 +557,17 @@ create_archive() {
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
         ROOT 2>/dev/null; then
-        # Kill spinner
-        kill $spinner_pid 2>/dev/null
-        wait $spinner_pid 2>/dev/null
+        # Kill progress indicator
+        kill $progress_pid 2>/dev/null
+        wait $progress_pid 2>/dev/null
         printf "\r\033[K"  # Clear the line
         error "Failed to create archive"
         exit 1
     fi
     
-    # Kill spinner
-    kill $spinner_pid 2>/dev/null
-    wait $spinner_pid 2>/dev/null
+    # Kill progress indicator
+    kill $progress_pid 2>/dev/null
+    wait $progress_pid 2>/dev/null
     printf "\r\033[K"  # Clear the line
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
