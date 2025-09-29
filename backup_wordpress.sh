@@ -542,6 +542,9 @@ create_archive() {
     
     # Create archive with exclusions - redirect stderr to a temp file for debugging
     local tar_error=$(mktemp)
+    
+    # Temporarily disable exit on error for tar
+    set +e
     tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
@@ -564,21 +567,30 @@ create_archive() {
         ROOT 2>"$tar_error"
     
     local tar_exit_code=$?
+    set -e  # Re-enable exit on error
     
-    # Kill progress indicator
+    # Kill progress indicator and wait for it to finish
     kill $progress_pid 2>/dev/null
     wait $progress_pid 2>/dev/null
-    printf "\r\033[K"  # Clear the line
+    printf "\r"  # Return to start of line
+    echo -ne "\033[K"  # Clear to end of line
     
-    # Check if tar succeeded
-    if [[ $tar_exit_code -ne 0 ]]; then
-        error "Failed to create archive"
+    # Check if tar had critical errors (exit code 2 = fatal, 1 = some files changed/warning)
+    # Exit code 1 from tar often means "file changed while reading" which is OK for our use case
+    if [[ $tar_exit_code -eq 2 ]]; then
+        error "Failed to create archive - critical tar error"
         if [[ -s "$tar_error" ]]; then
             error "Tar error output:"
             cat "$tar_error" >&2
         fi
         rm -f "$tar_error"
         exit 1
+    fi
+    
+    # Show warnings if tar exit code was 1
+    if [[ $tar_exit_code -eq 1 ]] && [[ -s "$tar_error" ]]; then
+        warning "Tar reported warnings (non-critical):"
+        cat "$tar_error" >&2
     fi
     
     rm -f "$tar_error"
