@@ -553,8 +553,9 @@ create_archive() {
     
     echo # New line after progress
     
-    # Check if archive was created successfully
-    if [[ $exit_status -ne 0 ]] || [[ ! -f "ROOT.tar.gz" ]]; then
+    # tar exits with 1 for "some files differ" which is acceptable
+    # Only exit codes 2+ are real errors
+    if [[ $exit_status -ge 2 ]] || [[ ! -f "ROOT.tar.gz" ]]; then
         error "Failed to create archive (exit code: $exit_status)"
         if [[ -f "/tmp/tar_errors_$.log" ]]; then
             error "Error details:"
@@ -562,6 +563,15 @@ create_archive() {
             rm -f "/tmp/tar_errors_$.log"
         fi
         exit 1
+    fi
+    
+    # Warn about exit code 1 but continue
+    if [[ $exit_status -eq 1 ]]; then
+        warning "Archive created with warnings (some files may have changed during archiving)"
+        if [[ -f "/tmp/tar_errors_$.log" ]] && [[ -s "/tmp/tar_errors_$.log" ]]; then
+            warning "Warning details:"
+            cat "/tmp/tar_errors_$.log" >&2
+        fi
     fi
     
     # Clean up error log
