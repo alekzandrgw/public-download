@@ -11,7 +11,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Global variables
@@ -47,19 +46,6 @@ prompt() {
 
 success() {
     echo -e "${GREEN}[OK]${NC} $1"
-}
-
-# Progress animation
-show_progress() {
-    local message="$1"
-    local duration="${2:-2}"
-    
-    echo -ne "${MAGENTA}${message}${NC}"
-    for i in $(seq 1 $((duration * 2))); do
-        echo -n "."
-        sleep 0.5
-    done
-    echo " Done!"
 }
 
 # Function to read input with validation
@@ -310,8 +296,6 @@ check_disk_space() {
     else
         success "Sufficient disk space available"
     fi
-    
-    show_progress "Preparing backup environment" 1
 }
 
 collect_configuration() {
@@ -325,7 +309,7 @@ collect_configuration() {
     WEBROOT="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WEBROOT" || exit 1
     
-    show_progress "Analyzing WordPress installation" 2
+    log "Analyzing WordPress installation..."
     
     # Get WordPress info early for better defaults
     cd "$WEBROOT" || exit 1
@@ -386,14 +370,15 @@ collect_configuration() {
     echo
     
     # Confirm configuration
-    prompt "Is this configuration correct? (y/N): "
+    prompt "Is this configuration correct? (Y/n): "
     read -r confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    # Accept empty input (Enter key) or Y/y as confirmation
+    if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
+        success "Configuration confirmed"
+    else
         error "Configuration cancelled by user"
         exit 1
     fi
-    
-    show_progress "Validating configuration" 1
 }
 
 cleanup() {
@@ -448,7 +433,6 @@ check_prerequisites() {
     fi
     
     success "Prerequisites check passed"
-    show_progress "Initializing backup process" 1
 }
 
 install_rclone() {
@@ -461,7 +445,6 @@ install_rclone() {
         yum install -y rclone >/dev/null 2>&1
         success "rclone installed successfully"
     fi
-    show_progress "Configuring backup tools" 1
 }
 
 setup_rclone() {
@@ -484,7 +467,6 @@ setup_rclone() {
     fi
     
     success "S3 connection established successfully"
-    show_progress "Preparing remote storage" 1
 }
 
 export_database() {
@@ -496,10 +478,27 @@ export_database() {
         exit 1
     }
     
-    show_progress "Dumping database" 2
+    # Start database export in background
+    "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet &
+    local export_pid=$!
     
-    # Export database
-    if ! "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet; then
+    # Monitor progress
+    info "Progress: "
+    while kill -0 $export_pid 2>/dev/null; do
+        if [[ -f "$WEBROOT/../stg-db-export.sql" ]]; then
+            local current_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+            echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
+        fi
+        sleep 5
+    done
+    
+    # Wait for process to complete and check exit status
+    wait $export_pid
+    local exit_status=$?
+    
+    echo # New line after progress
+    
+    if [[ $exit_status -ne 0 ]]; then
         error "Database export failed"
         exit 1
     fi
@@ -521,10 +520,8 @@ create_archive() {
         exit 1
     }
     
-    show_progress "Compressing files" 3
-    
-    # Create archive with exclusions
-    if ! tar -czf ROOT.tar.gz \
+    # Create archive with exclusions in background
+    tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
         --exclude='ROOT/wp-content/backups-dup-pro' \
@@ -543,7 +540,27 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null; then
+        ROOT 2>/dev/null &
+    local tar_pid=$!
+    
+    # Monitor progress
+    info "Progress: "
+    while kill -0 $tar_pid 2>/dev/null; do
+        if [[ -f "ROOT.tar.gz" ]]; then
+            local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+            local percentage=$((current_size * 100 / webroot_size))
+            echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size) (${percentage}%)     "
+        fi
+        sleep 5
+    done
+    
+    # Wait for process to complete and check exit status
+    wait $tar_pid
+    local exit_status=$?
+    
+    echo # New line after progress
+    
+    if [[ $exit_status -ne 0 ]]; then
         error "Failed to create archive"
         exit 1
     fi
@@ -588,16 +605,12 @@ upload_to_s3() {
     fi
     success "Archive uploaded"
     
-    show_progress "Finalizing upload" 1
-    
     # Set temp files for cleanup
     TEMP_FILES="ROOT.tar.gz stg-db-export.sql"
 }
 
 verify_backup() {
     log "Verifying backup in S3..."
-    
-    show_progress "Checking remote files" 2
     
     # List files in S3 to verify
     local s3_files
