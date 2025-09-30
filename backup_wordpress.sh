@@ -220,25 +220,10 @@ check_disk_space() {
     local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
     
     # Get database size estimate (current size of database)
+    # Get database size estimate (current size of database)
     local db_size=0
-    if "$WP_CLI" db size --allow-root --skip-plugins --skip-themes --quiet &>/dev/null; then
-        # Get the output and parse the size value (could be in B, KB, MB, GB)
-        local db_output=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes 2>/dev/null | grep -oP '\|\s+\K[0-9]+\s+[BKMGT]' | head -1)
-        
-        if [[ -n "$db_output" ]]; then
-            local size_value=$(echo "$db_output" | awk '{print $1}')
-            local size_unit=$(echo "$db_output" | awk '{print $2}')
-            
-            # Convert to bytes based on unit
-            case "$size_unit" in
-                B) db_size=$size_value ;;
-                K|KB) db_size=$((size_value * 1024)) ;;
-                M|MB) db_size=$((size_value * 1024 * 1024)) ;;
-                G|GB) db_size=$((size_value * 1024 * 1024 * 1024)) ;;
-                T|TB) db_size=$((size_value * 1024 * 1024 * 1024 * 1024)) ;;
-                *) db_size=0 ;;
-            esac
-        fi
+    if "$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null; then
+        db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
     fi
     
     local total_size=$((root_size + db_size))
