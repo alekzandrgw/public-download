@@ -312,7 +312,7 @@ collect_configuration() {
     local suggested_region=$(detect_aws_region "$SITE_URL")
     local suggested_bucket=$(get_bucket_for_region "$suggested_region")
     
-    # Display detected values and allow customization
+    # Display detected values
     info "Detected WordPress Information:"
     echo "Site URL: $detected_url"
     echo "Database charset: $detected_charset"
@@ -320,6 +320,10 @@ collect_configuration() {
     echo "Suggested S3 Bucket: $suggested_bucket"
     echo
     
+    # Check disk space before proceeding with further prompts
+    check_disk_space
+    
+    # Allow customization after disk space check
     prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
@@ -648,7 +652,6 @@ main() {
     echo
     
     collect_configuration
-    check_disk_space
     check_prerequisites
     install_rclone
     setup_rclone
