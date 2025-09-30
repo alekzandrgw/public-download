@@ -213,17 +213,28 @@ validate_directory() {
     return 0
 }
 
-check_disk_space() {
-    log "Analyzing disk space requirements..."
+analyze_wordpress_and_disk() {
+    log "Analyzing WordPress installation and disk space..."
+    echo
+    
+    # Get WordPress info
+    cd "$WEBROOT" || exit 1
+    
+    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
+        error "WordPress not installed in '$WEBROOT'"
+        exit 1
+    fi
+    
+    # Get site URL for region detection
+    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
+    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
     
     # Get ROOT directory size
     local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
     
-    # Get database size estimate (current size of database)
-    # Get database size estimate (current size of database)
-    # Get database size estimate (current size of database)
+    # Get database size
     local db_size=0
-    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
+    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b 2>/dev/null | grep -oP '^\d+' || echo "0")
     
     local total_size=$((root_size + db_size))
     local required_space=$((total_size * 110 / 100))  # Add 10% buffer
@@ -231,11 +242,16 @@ check_disk_space() {
     # Get available space on the partition containing WEBROOT
     local available_space=$(df -B1 "$WEBROOT/../" | awk 'NR==2 {print $4}')
     
-    # Display sizes
+    # Display WordPress information
+    info "=== WordPress Installation Analysis ==="
+    echo "Site URL: $detected_url"
+    echo "Database charset: $detected_charset"
     echo
+    
+    # Display disk space analysis
     info "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
-    echo "Database size (est.): $(numfmt --to=iec $db_size)"
+    echo "Database size: $(numfmt --to=iec $db_size)"
     echo "Total backup size: $(numfmt --to=iec $total_size)"
     echo "Required space (with 10% buffer): $(numfmt --to=iec $required_space)"
     echo "Available disk space: $(numfmt --to=iec $available_space)"
@@ -280,6 +296,13 @@ check_disk_space() {
     else
         success "Sufficient disk space available"
     fi
+    
+    echo
+    success "WordPress installation validated"
+    
+    # Store values for later use
+    SITE_URL="$detected_url"
+    DB_CHARSET="$detected_charset"
 }
 
 collect_configuration() {
@@ -287,55 +310,36 @@ collect_configuration() {
     info "=== WordPress S3 Backup Configuration ==="
     echo
     
-    # WordPress Configuration (ask first to get site URL for region detection)
+    # WordPress Configuration
     info "WordPress Configuration:"
     read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
     WEBROOT="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WEBROOT" || exit 1
     
-    log "Analyzing WordPress installation..."
+    echo
     
-    # Get WordPress info early for better defaults
-    cd "$WEBROOT" || exit 1
+    # Analyze WordPress and disk space BEFORE asking for AWS credentials
+    analyze_wordpress_and_disk
     
-    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
-        error "WordPress not installed in '$WEBROOT'"
-        exit 1
+    # Allow customization of detected values
+    prompt "Customize destination folder name? Press Enter to accept [Detected: $SITE_URL]: "
+    read custom_url
+    if [[ -n "$custom_url" ]]; then
+        SITE_URL="$custom_url"
     fi
     
-    # Get site URL for region detection
-    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
-    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
-    
-    success "WordPress installation detected"
-    echo
-    
-    # Detect suggested AWS region and bucket based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
-    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
-    
-    # Display detected values and allow customization
-    info "Detected WordPress Information:"
-    echo "Site URL: $detected_url"
-    echo "Database charset: $detected_charset"
-    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
-    echo "Suggested S3 Bucket: $suggested_bucket"
-    echo
-    
-    prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
-    read custom_url
-    SITE_URL="${custom_url:-$detected_url}"
-    
-    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
+    prompt "Customize database charset? Press Enter to accept [Detected: $DB_CHARSET]: "
     read custom_charset
-    DB_CHARSET="${custom_charset:-$detected_charset}"
+    if [[ -n "$custom_charset" ]]; then
+        DB_CHARSET="$custom_charset"
+    fi
     
     echo
     
     # Detect suggested AWS region based on site URL
     local suggested_region=$(detect_aws_region "$SITE_URL")
     
-    # AWS Configuration
+    # AWS Configuration (now that we know backup is feasible)
     info "AWS Configuration:"
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
@@ -649,11 +653,10 @@ main() {
     echo "==============================================================="
     echo
     
+    check_prerequisites
     collect_configuration
     echo
     
-    check_prerequisites
-    check_disk_space
     install_rclone
     setup_rclone
     export_database
