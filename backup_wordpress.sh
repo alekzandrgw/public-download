@@ -92,11 +92,11 @@ detect_aws_region() {
     local url="$1"
     
     # Check for region indicators in URL
-    if [[ "$url" =~ eu-west|ireland|dublin|europe ]]; then
+    if [[ "$url" =~ ew1 ]]; then
         echo "eu-west-1"
-    elif [[ "$url" =~ us-east|virginia|east ]]; then
+    elif [[ "$url" =~ ue1 ]]; then
         echo "us-east-1"
-    elif [[ "$url" =~ us-west|oregon|west ]]; then
+    elif [[ "$url" =~ uw2 ]]; then
         echo "us-west-2"
     else
         # Default to us-east-1 if no match
