@@ -213,6 +213,7 @@ validate_directory() {
     return 0
 }
 
+# Analyze WordPress installation and check disk space
 analyze_wordpress_and_check_space() {
     log "Analyzing WordPress installation..."
     
@@ -317,8 +318,8 @@ analyze_wordpress_and_check_space() {
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
-    # Store suggested region for later use
-    echo "$suggested_region" > /tmp/.wp_backup_suggested_region
+    # Return suggested region for later use
+    echo "$suggested_region"
 }
 
 collect_configuration() {
@@ -333,11 +334,8 @@ collect_configuration() {
     validate_directory "$WEBROOT" || exit 1
     
     # Analyze WordPress and check disk space BEFORE asking for AWS credentials
-    analyze_wordpress_and_check_space
-    
-    # Get suggested region from temp file
-    local suggested_region=$(cat /tmp/.wp_backup_suggested_region 2>/dev/null || echo "us-east-1")
-    rm -f /tmp/.wp_backup_suggested_region
+    # This function sets SITE_URL and DB_CHARSET and returns suggested region
+    local suggested_region=$(analyze_wordpress_and_check_space)
     
     echo
     
@@ -386,9 +384,6 @@ cleanup() {
         cd "$WEBROOT/../" && rm -f $TEMP_FILES 2>/dev/null || true
         success "Removed temporary files: $TEMP_FILES"
     fi
-    
-    # Remove temp region file if it exists
-    rm -f /tmp/.wp_backup_suggested_region 2>/dev/null || true
     
     # Remove rclone if it was installed by this script
     if command -v rclone &> /dev/null; then
@@ -681,7 +676,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.2"
+    info "         WordPress S3 Backup Script v2.3"
     echo "==============================================================="
     echo
     
