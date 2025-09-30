@@ -546,8 +546,7 @@ create_archive() {
     while kill -0 $tar_pid 2>/dev/null; do
         if [[ -f "ROOT.tar.gz" ]]; then
             local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-            local percentage=$((current_size * 100 / webroot_size))
-            echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size) (${percentage}%)     "
+            echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
         sleep 2
     done
