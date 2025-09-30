@@ -483,13 +483,12 @@ export_database() {
     local export_pid=$!
     
     # Monitor progress
-    info "Progress: "
     while kill -0 $export_pid 2>/dev/null; do
         if [[ -f "$WEBROOT/../stg-db-export.sql" ]]; then
             local current_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
-        sleep 5
+        sleep 2
     done
     
     # Wait for process to complete and check exit status
@@ -544,14 +543,13 @@ create_archive() {
     local tar_pid=$!
     
     # Monitor progress
-    info "Progress: "
     while kill -0 $tar_pid 2>/dev/null; do
         if [[ -f "ROOT.tar.gz" ]]; then
             local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
             local percentage=$((current_size * 100 / webroot_size))
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size) (${percentage}%)     "
         fi
-        sleep 5
+        sleep 2
     done
     
     # Wait for process to complete and check exit status
