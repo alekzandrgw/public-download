@@ -363,9 +363,9 @@ collect_configuration() {
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
     echo
-    info "** Note: You'll need AWS credentials for region: $(get_region_name $suggested_region) ($suggested_region)"
-    info "** Please retrieve your Access Key ID and Secret Access Key before proceeding."
-    echo
+    
+    # Detect suggested AWS region based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
     
     # AWS Configuration
     info "AWS Configuration:"
@@ -521,20 +521,7 @@ create_archive() {
         exit 1
     }
     
-    # Start spinner in background
-    echo -ne "${MAGENTA}Compressing files${NC}"
-    
-    # Spinner function
-    (
-        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local i=0
-        while true; do
-            printf "\r${MAGENTA}Compressing files ${spinner[$i]}${NC}"
-            i=$(( (i + 1) % 10 ))
-            sleep 0.1
-        done
-    ) &
-    local spinner_pid=$!
+    show_progress "Compressing files" 3
     
     # Create archive with exclusions
     if ! tar -czf ROOT.tar.gz \
@@ -557,18 +544,9 @@ create_archive() {
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
         ROOT 2>/dev/null; then
-        # Kill spinner
-        kill $spinner_pid 2>/dev/null
-        wait $spinner_pid 2>/dev/null
-        printf "\r\033[K"  # Clear the line
         error "Failed to create archive"
         exit 1
     fi
-    
-    # Kill spinner
-    kill $spinner_pid 2>/dev/null
-    wait $spinner_pid 2>/dev/null
-    printf "\r\033[K"  # Clear the line
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
