@@ -38,7 +38,7 @@ warning() {
 }
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} ${1:-}"
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 prompt() {
@@ -144,8 +144,7 @@ select_region_and_bucket() {
     local default_bucket=$(get_bucket_for_region "$default_region")
     
     echo
-    echo -e "${BLUE}[INFO]${NC}"
-    echo "Available S3 Backup Locations:"
+    info "Available S3 Backup Locations:"
     echo "  1) Europe (Ireland) - eu-west-1 → staging-site-backups-euwest"
     echo "  2) US East (N. Virginia) - us-east-1 → staging-site-backups-useast"
     echo "  3) US West (Oregon) - us-west-2 → staging-site-backups-uswest"
@@ -264,8 +263,7 @@ check_disk_space() {
     
     # Display sizes
     echo
-    echo -e "${BLUE}[INFO]${NC}"
-    echo "=== Disk Space Analysis ==="
+    info "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
     echo "Database size (est.): $(numfmt --to=iec $db_size)"
     echo "Total backup size: $(numfmt --to=iec $total_size)"
@@ -318,8 +316,7 @@ check_disk_space() {
 
 collect_configuration() {
     echo
-    echo -e "${BLUE}[INFO]${NC}"
-    echo "=== WordPress S3 Backup Configuration ==="
+    info "=== WordPress S3 Backup Configuration ==="
     echo
     
     # WordPress Configuration (ask first to get site URL for region detection)
@@ -345,8 +342,8 @@ collect_configuration() {
     success "WordPress installation detected"
     echo
     
-    # Detect suggested AWS region and bucket based on site URL (use detected_url, not SITE_URL)
-    local suggested_region=$(detect_aws_region "$detected_url")
+    # Detect suggested AWS region and bucket based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
     local suggested_bucket=$(get_bucket_for_region "$suggested_region")
     
     # Display detected values and allow customization
@@ -380,8 +377,7 @@ collect_configuration() {
     
     # Display configuration summary
     echo
-    echo -e "${BLUE}[INFO]${NC}"
-    echo "=== Configuration Summary ==="
+    info "=== Configuration Summary ==="
     echo "WordPress Root: $WEBROOT"
     echo "Site URL: $SITE_URL"
     echo "Database charset: $DB_CHARSET"
@@ -525,24 +521,23 @@ create_archive() {
         exit 1
     }
     
-    # Start progress indicator in background that shows growing archive size
+    # Start spinner in background
+    echo -ne "${MAGENTA}Compressing files${NC}"
+    
+    # Spinner function
     (
+        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local i=0
         while true; do
-            if [[ -f ROOT.tar.gz ]]; then
-                local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-                local human_size=$(numfmt --to=iec $current_size 2>/dev/null || echo "0")
-                printf "\r${MAGENTA}Compressing files... Current size: ${human_size}${NC}  "
-            else
-                printf "\r${MAGENTA}Compressing files... Initializing...${NC}               "
-            fi
-            sleep 5
+            printf "\r${MAGENTA}Compressing files ${spinner[$i]}${NC}"
+            i=$(( (i + 1) % 10 ))
+            sleep 0.1
         done
     ) &
-    local progress_pid=$!
+    local spinner_pid=$!
     
-    # Create archive with exclusions - allow exit code 1 (warnings)
-    set +e
-    tar -czf ROOT.tar.gz \
+    # Create archive with exclusions
+    if ! tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
         --exclude='ROOT/wp-content/backups-dup-pro' \
@@ -561,21 +556,19 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null
-    local tar_exit=$?
-    set -e
-    
-    # Kill progress indicator
-    kill $progress_pid 2>/dev/null
-    wait $progress_pid 2>/dev/null
-    printf "\r"
-    echo -ne "\033[K"
-    
-    # Check tar exit code (0 = success, 1 = warnings OK, 2 = fatal error)
-    if [[ $tar_exit -eq 2 ]]; then
+        ROOT 2>/dev/null; then
+        # Kill spinner
+        kill $spinner_pid 2>/dev/null
+        wait $spinner_pid 2>/dev/null
+        printf "\r\033[K"  # Clear the line
         error "Failed to create archive"
         exit 1
     fi
+    
+    # Kill spinner
+    kill $spinner_pid 2>/dev/null
+    wait $spinner_pid 2>/dev/null
+    printf "\r\033[K"  # Clear the line
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
@@ -649,8 +642,7 @@ verify_backup() {
     fi
     
     echo
-    echo -e "${BLUE}[INFO]${NC}"
-    echo "Backup contents:"
+    info "Backup contents:"
     echo "$s3_files" | while read -r size file; do
         echo "  [OK] $file ($(numfmt --to=iec $size))"
     done
@@ -661,9 +653,8 @@ verify_backup() {
 
 display_summary() {
     echo
-    echo -e "${BLUE}[INFO]${NC}"
     echo "==============================================================="
-    echo "              *** BACKUP COMPLETED SUCCESSFULLY ***"
+    info "              *** BACKUP COMPLETED SUCCESSFULLY ***"
     echo "==============================================================="
     echo
     echo ">> Backup Details:"
@@ -681,9 +672,8 @@ display_summary() {
 
 main() {
     echo
-    echo -e "${BLUE}[INFO]${NC}"
     echo "==============================================================="
-    echo "         WordPress S3 Backup Script v2.1"
+    info "         WordPress S3 Backup Script v2.1"
     echo "==============================================================="
     echo
     
