@@ -512,7 +512,10 @@ create_archive() {
         exit 1
     }
     
-    # Create archive with exclusions in background
+    # Remove old archive if exists
+    rm -f ROOT.tar.gz 2>/dev/null || true
+    
+    # Create archive with exclusions in background, capture stderr
     tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
@@ -532,7 +535,7 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null &
+        ROOT 2>/tmp/tar_errors_$.log &
     local tar_pid=$!
     
     # Monitor progress
@@ -550,12 +553,26 @@ create_archive() {
     
     echo # New line after progress
     
-    if [[ $exit_status -ne 0 ]]; then
-        error "Failed to create archive"
+    # Check if archive was created successfully
+    if [[ $exit_status -ne 0 ]] || [[ ! -f "ROOT.tar.gz" ]]; then
+        error "Failed to create archive (exit code: $exit_status)"
+        if [[ -f "/tmp/tar_errors_$.log" ]]; then
+            error "Error details:"
+            cat "/tmp/tar_errors_$.log" >&2
+            rm -f "/tmp/tar_errors_$.log"
+        fi
         exit 1
     fi
     
+    # Clean up error log
+    rm -f "/tmp/tar_errors_$.log" 2>/dev/null || true
+    
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+    if [[ $archive_size -eq 0 ]]; then
+        error "Archive was created but is empty (0 bytes)"
+        exit 1
+    fi
+    
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
