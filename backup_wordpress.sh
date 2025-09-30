@@ -221,10 +221,9 @@ check_disk_space() {
     
     # Get database size estimate (current size of database)
     # Get database size estimate (current size of database)
+    # Get database size estimate (current size of database)
     local db_size=0
-    if "$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null; then
-        db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
-    fi
+    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
     
     local total_size=$((root_size + db_size))
     local required_space=$((total_size * 110 / 100))  # Add 10% buffer
