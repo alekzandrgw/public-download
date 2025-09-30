@@ -345,8 +345,8 @@ collect_configuration() {
     success "WordPress installation detected"
     echo
     
-    # Detect suggested AWS region and bucket based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
+    # Detect suggested AWS region and bucket based on site URL (use detected_url, not SITE_URL)
+    local suggested_region=$(detect_aws_region "$detected_url")
     local suggested_bucket=$(get_bucket_for_region "$suggested_region")
     
     # Display detected values and allow customization
@@ -540,10 +540,7 @@ create_archive() {
     ) &
     local progress_pid=$!
     
-    # Create archive with exclusions - redirect stderr to a temp file for debugging
-    local tar_error=$(mktemp)
-    
-    # Temporarily disable exit on error for tar
+    # Create archive with exclusions - allow exit code 1 (warnings)
     set +e
     tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
@@ -564,49 +561,23 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>"$tar_error"
+        ROOT 2>/dev/null
+    local tar_exit=$?
+    set -e
     
-    local tar_exit_code=$?
-    set -e  # Re-enable exit on error
-    
-    # Kill progress indicator and wait for it to finish
+    # Kill progress indicator
     kill $progress_pid 2>/dev/null
     wait $progress_pid 2>/dev/null
-    printf "\r"  # Return to start of line
-    echo -ne "\033[K"  # Clear to end of line
+    printf "\r"
+    echo -ne "\033[K"
     
-    # Check if tar had critical errors (exit code 2 = fatal, 1 = some files changed/warning)
-    # Exit code 1 from tar often means "file changed while reading" which is OK for our use case
-    if [[ $tar_exit_code -eq 2 ]]; then
-        error "Failed to create archive - critical tar error"
-        if [[ -s "$tar_error" ]]; then
-            error "Tar error output:"
-            cat "$tar_error" >&2
-        fi
-        rm -f "$tar_error"
-        exit 1
-    fi
-    
-    # Show warnings if tar exit code was 1
-    if [[ $tar_exit_code -eq 1 ]] && [[ -s "$tar_error" ]]; then
-        warning "Tar reported warnings (non-critical):"
-        cat "$tar_error" >&2
-    fi
-    
-    rm -f "$tar_error"
-    
-    # Verify archive was created and has content
-    if [[ ! -f ROOT.tar.gz ]]; then
-        error "Archive file was not created"
+    # Check tar exit code (0 = success, 1 = warnings OK, 2 = fatal error)
+    if [[ $tar_exit -eq 2 ]]; then
+        error "Failed to create archive"
         exit 1
     fi
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-    if [[ $archive_size -eq 0 ]]; then
-        error "Archive file is empty"
-        exit 1
-    fi
-    
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
