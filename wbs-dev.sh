@@ -213,28 +213,13 @@ validate_directory() {
     return 0
 }
 
-# Analyze WordPress installation and check disk space
-analyze_wordpress_and_check_space() {
-    log "Analyzing WordPress installation..."
+check_disk_space() {
+    log "Analyzing disk space requirements..."
     
-    # Change to WordPress directory
-    cd "$WEBROOT" || {
-        error "Failed to access WordPress directory '$WEBROOT'"
-        exit 1
-    }
-    
-    # Verify WordPress installation
-    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
-        error "WordPress not installed in '$WEBROOT'"
-        exit 1
-    fi
-    
-    # Get WordPress info
-    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
-    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
-    
-    # Get size information
+    # Get ROOT directory size
     local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
+    
+    # Get database size estimate (current size of database)
     local db_size=0
     db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
     
@@ -244,21 +229,8 @@ analyze_wordpress_and_check_space() {
     # Get available space on the partition containing WEBROOT
     local available_space=$(df -B1 "$WEBROOT/../" | awk 'NR==2 {print $4}')
     
-    # Detect suggested AWS region based on site URL
-    local suggested_region=$(detect_aws_region "$detected_url")
-    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
-    
-    # Display all information together
+    # Display sizes
     echo
-    success "WordPress installation detected"
-    echo
-    info "=== WordPress Information ==="
-    echo "Site URL: $detected_url"
-    echo "Database charset: $detected_charset"
-    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
-    echo "Suggested S3 Bucket: $suggested_bucket"
-    echo
-    
     info "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
     echo "Database size (est.): $(numfmt --to=iec $db_size)"
@@ -306,10 +278,48 @@ analyze_wordpress_and_check_space() {
     else
         success "Sufficient disk space available"
     fi
-    
+}
+
+collect_configuration() {
+    echo
+    info "=== WordPress S3 Backup Configuration ==="
     echo
     
-    # Allow customization of detected values
+    # WordPress Configuration (ask first to get site URL for region detection)
+    info "WordPress Configuration:"
+    read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
+    WEBROOT="${input:-/var/www/webroot/ROOT}"
+    validate_directory "$WEBROOT" || exit 1
+    
+    log "Analyzing WordPress installation..."
+    
+    # Get WordPress info early for better defaults
+    cd "$WEBROOT" || exit 1
+    
+    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
+        error "WordPress not installed in '$WEBROOT'"
+        exit 1
+    fi
+    
+    # Get site URL for region detection
+    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
+    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
+    
+    success "WordPress installation detected"
+    echo
+    
+    # Detect suggested AWS region and bucket based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
+    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
+    
+    # Display detected values and allow customization
+    info "Detected WordPress Information:"
+    echo "Site URL: $detected_url"
+    echo "Database charset: $detected_charset"
+    echo "Detected AWS Region: $(get_region_name $suggested_region)"
+    echo "Suggested S3 Bucket: $suggested_bucket"
+    echo
+    
     prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
@@ -318,28 +328,12 @@ analyze_wordpress_and_check_space() {
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
     
-    # Return suggested region for later use
-    echo "$suggested_region"
-}
-
-collect_configuration() {
-    echo
-    info "=== WordPress S3 Backup Configuration ==="
     echo
     
-    # WordPress Configuration
-    info "WordPress Configuration:"
-    read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
-    WEBROOT="${input:-/var/www/webroot/ROOT}"
-    validate_directory "$WEBROOT" || exit 1
+    # Detect suggested AWS region based on site URL
+    local suggested_region=$(detect_aws_region "$SITE_URL")
     
-    # Analyze WordPress and check disk space BEFORE asking for AWS credentials
-    # This function sets SITE_URL and DB_CHARSET and returns suggested region
-    local suggested_region=$(analyze_wordpress_and_check_space)
-    
-    echo
-    
-    # AWS Configuration (only asked AFTER disk space check passes)
+    # AWS Configuration
     info "AWS Configuration:"
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
@@ -507,10 +501,7 @@ create_archive() {
         exit 1
     }
     
-    # Remove old archive if exists
-    rm -f ROOT.tar.gz 2>/dev/null || true
-    
-    # Create archive with exclusions in background, capture stderr
+    # Create archive with exclusions in background
     tar -czf ROOT.tar.gz \
         --exclude='ROOT/wp-content/ai1wm-backups' \
         --exclude='ROOT/wp-content/backups' \
@@ -530,7 +521,7 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/tmp/tar_errors_$.log &
+        ROOT 2>/dev/null &
     local tar_pid=$!
     
     # Monitor progress
@@ -548,36 +539,12 @@ create_archive() {
     
     echo # New line after progress
     
-    # tar exits with 1 for "some files differ" which is acceptable
-    # Only exit codes 2+ are real errors
-    if [[ $exit_status -ge 2 ]] || [[ ! -f "ROOT.tar.gz" ]]; then
-        error "Failed to create archive (exit code: $exit_status)"
-        if [[ -f "/tmp/tar_errors_$.log" ]]; then
-            error "Error details:"
-            cat "/tmp/tar_errors_$.log" >&2
-            rm -f "/tmp/tar_errors_$.log"
-        fi
+    if [[ $exit_status -ne 0 ]]; then
+        error "Failed to create archive"
         exit 1
     fi
-    
-    # Warn about exit code 1 but continue
-    if [[ $exit_status -eq 1 ]]; then
-        warning "Archive created with warnings (some files may have changed during archiving)"
-        if [[ -f "/tmp/tar_errors_$.log" ]] && [[ -s "/tmp/tar_errors_$.log" ]]; then
-            warning "Warning details:"
-            cat "/tmp/tar_errors_$.log" >&2
-        fi
-    fi
-    
-    # Clean up error log
-    rm -f "/tmp/tar_errors_$.log" 2>/dev/null || true
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-    if [[ $archive_size -eq 0 ]]; then
-        error "Archive was created but is empty (0 bytes)"
-        exit 1
-    fi
-    
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
@@ -676,13 +643,12 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.3"
+    info "         WordPress S3 Backup Script v2.1"
     echo "==============================================================="
     echo
     
     collect_configuration
-    echo
-    
+    check_disk_space
     check_prerequisites
     install_rclone
     setup_rclone
