@@ -464,8 +464,9 @@ export_database() {
     }
     
     # Start database export in background
-    "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet &
+    "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>../stg-db-export.err &
     local export_pid=$!
+    local error_file="$WEBROOT/../stg-db-export.err"
     
     # Monitor progress
     while kill -0 $export_pid 2>/dev/null; do
@@ -481,6 +482,13 @@ export_database() {
     local exit_status=$?
     
     echo # New line after progress
+    
+    # Show any errors from export (but do not exit unless export failed)
+    if [[ -s "$error_file" ]]; then
+        warning "Non-fatal errors during database export (see below):"
+        cat "$error_file"
+    fi
+    rm -f "$error_file"
     
     if [[ $exit_status -ne 0 ]]; then
         error "Database export failed"
