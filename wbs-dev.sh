@@ -463,7 +463,7 @@ export_database() {
         exit 1
     }
     
-    # Start database export process in background
+    # Start database export processing in background
     "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>../stg-db-export.err || true &
     local export_pid=$!
     local error_file="$WEBROOT/../stg-db-export.err"
