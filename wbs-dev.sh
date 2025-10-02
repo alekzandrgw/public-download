@@ -324,11 +324,11 @@ collect_configuration() {
     check_disk_space
 
     # Allow customization after disk space check
-    prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
+    prompt "Custom destination folder name: Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
 
-    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
+    prompt "Custom database charset: Press Enter to accept [Detected: $detected_charset]: "
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
 
@@ -355,7 +355,7 @@ collect_configuration() {
     echo
 
     # Confirm configuration
-    prompt "Is this configuration correct? (Y/n): "
+    prompt "Is this configuration correct? (Y/N) [Default: Y]"
     read -r confirm
     # Accept empty input (Enter key) or Y/y as confirmation
     if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
@@ -385,7 +385,7 @@ cleanup() {
     # Remove rclone if it was installed by this script
     if command -v rclone &> /dev/null; then
         echo
-        prompt "Remove rclone from system? (y/N): "
+        prompt "Remove rclone from system? (Y/N): "
         read -r remove_rclone
         if [[ "$remove_rclone" =~ ^[Yy]$ ]]; then
             yum remove -y rclone
