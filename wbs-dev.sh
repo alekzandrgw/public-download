@@ -309,42 +309,41 @@ collect_configuration() {
     echo
     
     # Detect suggested AWS region and bucket based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
+    local suggested_region=$(detect_aws_region "$detected_url")
     local suggested_bucket=$(get_bucket_for_region "$suggested_region")
-    
+
     # Display detected values
     info "Detected WordPress Information:"
     echo "Site URL: $detected_url"
     echo "Database charset: $detected_charset"
-    echo "Detected AWS Region: $(get_region_name $suggested_region)"
+    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
     echo "Suggested S3 Bucket: $suggested_bucket"
     echo
-    
+
     # Check disk space before proceeding with further prompts
     check_disk_space
-    
+
     # Allow customization after disk space check
     prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
     read custom_url
     SITE_URL="${custom_url:-$detected_url}"
-    
+
     prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
     read custom_charset
     DB_CHARSET="${custom_charset:-$detected_charset}"
-    
+
     echo
-    
+
     # Detect suggested AWS region based on site URL
     local suggested_region=$(detect_aws_region "$SITE_URL")
-    
     # AWS Configuration
     info "AWS Configuration:"
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
-    
+
     # Region and bucket selection with smart default
     select_region_and_bucket "$suggested_region"
-    
+
     # Display configuration summary
     echo
     info "=== Configuration Summary ==="
@@ -354,7 +353,7 @@ collect_configuration() {
     echo "AWS Region: $(get_region_name $AWS_REGION) ($AWS_REGION)"
     echo "S3 Bucket: $S3_BUCKET"
     echo
-    
+
     # Confirm configuration
     prompt "Is this configuration correct? (Y/n): "
     read -r confirm
