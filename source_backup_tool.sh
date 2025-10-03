@@ -28,6 +28,15 @@ MAINTENANCE_MODE_ENABLED=false
 MAINTENANCE_TYPE=""
 DISABLE_MAINTENANCE_ON_EXIT=false
 
+# Site configuration variables
+CUSTOM_LOGIN_URL=""
+BB_APP_ID=""
+BB_APP_KEY=""
+CRON_JOBS=""
+CUSTOM_PHP_INI=""
+PHP_INI_PATH="/usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini"
+CRON_USER="litespeed"
+
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
 }
@@ -302,10 +311,10 @@ check_buddyboss_installation() {
     echo "BuddyBoss Theme: $bb_theme_installed"
     
     if [[ "$bb_app_installed" == "yes" ]]; then
-        local bb_app_id=$("$WP_CLI" option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
-        local bb_app_key=$("$WP_CLI" option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
-        echo "BuddyBoss App ID: $bb_app_id"
-        echo "BuddyBoss App Key: $bb_app_key"
+        BB_APP_ID=$("$WP_CLI" option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+        BB_APP_KEY=$("$WP_CLI" option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+        echo "BuddyBoss App ID: $BB_APP_ID"
+        echo "BuddyBoss App Key: $BB_APP_KEY"
     fi
     echo
     
@@ -529,6 +538,98 @@ create_archive() {
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
+export_configuration() {
+    log "Exporting server configuration..."
+    
+    local config_file="$BACKUP_DIR/server_config_$DATE.txt"
+    local restore_script="$BACKUP_DIR/restore_config_$DATE.sh"
+    
+    # Create human-readable configuration file
+    cat > "$config_file" << EOF
+# WordPress Backup Configuration
+# Generated: $(date +'%Y-%m-%d %H:%M:%S')
+# Site URL: $SITE_URL
+
+## Site Information
+SITE_URL=$SITE_URL
+DB_CHARSET=$DB_CHARSET
+CUSTOM_LOGIN_URL=$CUSTOM_LOGIN_URL
+
+## BuddyBoss Configuration
+BB_APP_ID=$BB_APP_ID
+BB_APP_KEY=$BB_APP_KEY
+
+## Cron Jobs (litespeed user)
+# To restore: crontab -u litespeed - < cron_jobs_${DATE}.txt
+EOF
+
+    if [[ -n "$CRON_JOBS" ]]; then
+        echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
+        success "Cron jobs exported to: cron_jobs_$DATE.txt"
+    fi
+
+    # Export custom PHP configuration
+    if [[ -n "$CUSTOM_PHP_INI" ]]; then
+        echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
+        cat >> "$config_file" << EOF
+
+## Custom PHP Configuration
+# Original file: $PHP_INI_PATH
+# To restore: cp custom_php_${DATE}.ini /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
+# Then restart: systemctl restart lsws
+EOF
+        success "Custom PHP config exported to: custom_php_$DATE.ini"
+    fi
+
+    # Create automated restore script
+    cat > "$restore_script" << 'EOFSCRIPT'
+#!/bin/bash
+# WordPress Backup Restore Script
+# Auto-generated configuration restore script
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATE_STAMP="DATE_PLACEHOLDER"
+
+echo "=== WordPress Configuration Restore ==="
+echo
+
+# Restore custom PHP configuration
+if [[ -f "$SCRIPT_DIR/custom_php_${DATE_STAMP}.ini" ]]; then
+    echo -n "Restore custom PHP configuration? (y/N): "
+    read -r restore_php
+    if [[ "$restore_php" =~ ^[Yy]$ ]]; then
+        cp "$SCRIPT_DIR/custom_php_${DATE_STAMP}.ini" /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
+        systemctl restart lsws
+        echo "[OK] Custom PHP configuration restored"
+    fi
+fi
+
+# Restore cron jobs
+if [[ -f "$SCRIPT_DIR/cron_jobs_${DATE_STAMP}.txt" ]]; then
+    echo -n "Restore cron jobs for litespeed user? (y/N): "
+    read -r restore_cron
+    if [[ "$restore_cron" =~ ^[Yy]$ ]]; then
+        crontab -u litespeed "$SCRIPT_DIR/cron_jobs_${DATE_STAMP}.txt"
+        echo "[OK] Cron jobs restored"
+    fi
+fi
+
+echo
+echo "Configuration restore completed!"
+EOFSCRIPT
+
+    # Replace placeholder with actual date
+    sed -i "s/DATE_PLACEHOLDER/$DATE/g" "$restore_script"
+    chmod +x "$restore_script"
+    
+    success "Configuration exported to: server_config_$DATE.txt"
+    success "Restore script created: restore_config_$DATE.sh"
+    
+    echo
+}
+
 verify_backup() {
     log "Verifying backup files..."
     
@@ -551,6 +652,20 @@ verify_backup() {
     echo "  [OK] $(basename "$DB_DUMP") ($(numfmt --to=iec $db_size))"
     echo "  [OK] $(basename "$WEB_ARCHIVE") ($(numfmt --to=iec $archive_size))"
     
+    # Check for configuration files
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "  [OK] server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "  [OK] cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "  [OK] custom_php_$DATE.ini"
+    fi
+    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
+        echo "  [OK] restore_config_$DATE.sh"
+    fi
+    
     echo
     success "Backup verification completed successfully"
 }
@@ -568,10 +683,74 @@ display_summary() {
     echo ">> Files Created:"
     echo "   - Database: $(basename "$DB_DUMP") ($DB_CHARSET charset)"
     echo "   - Web files: $(basename "$WEB_ARCHIVE")"
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "   - Configuration: server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "   - Cron jobs: cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "   - PHP config: custom_php_$DATE.ini"
+    fi
+    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
+        echo "   - Restore script: restore_config_$DATE.sh"
+    fi
     echo
+    
+    # Display important configuration values
+    echo ">> Site Configuration:"
+    if [[ -n "$CUSTOM_LOGIN_URL" ]]; then
+        echo "   - Custom Login URL: /$CUSTOM_LOGIN_URL"
+    else
+        echo "   - Custom Login URL: /wp-admin (default)"
+    fi
+    
+    if [[ -n "$BB_APP_ID" ]] && [[ "$BB_APP_ID" != "N/A" ]]; then
+        echo "   - BuddyBoss App ID: $BB_APP_ID"
+        echo "   - BuddyBoss App Key: $BB_APP_KEY"
+    fi
+    
+    if [[ -n "$CRON_JOBS" ]]; then
+        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^
+
+main() {
+    echo
+    echo "==============================================================="
+    info "         WordPress Local Backup Tool v1.0"
+    echo "==============================================================="
+    echo
+    
+    collect_configuration
+    check_prerequisites
+    check_buddyboss_installation
+    detect_site_configuration
+    enable_maintenance_mode
+    export_database
+    create_archive
+    export_configuration
+    verify_backup
+    display_summary
+}
+
+# Run main function
+main | wc -l)
+        echo "   - Cron jobs: $cron_count job(s) detected"
+    fi
+    
+    if [[ -n "$CUSTOM_PHP_INI" ]]; then
+        echo "   - Custom PHP config: Yes ($PHP_INI_PATH)"
+    fi
+    echo
+    
     echo ">> Full Paths:"
     echo "   - $DB_DUMP"
     echo "   - $WEB_ARCHIVE"
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "   - $BACKUP_DIR/server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
+        echo "   - $BACKUP_DIR/restore_config_$DATE.sh"
+    fi
     echo
     echo "==============================================================="
     echo
