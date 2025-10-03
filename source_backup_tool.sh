@@ -321,10 +321,12 @@ check_buddyboss_installation() {
 enable_maintenance_mode() {
     echo
     
-    if check_buddyboss_installation; then
+    # Always check for BuddyBoss components first
+    local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
+    local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
+    
+    if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
         # BuddyBoss detected
-        local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
-        local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
         
         if [[ "$bb_theme_installed" == "yes" ]]; then
             prompt "Enable BuddyBoss Theme's maintenance mode? (Y/N) [Default: Y]: "
@@ -346,6 +348,7 @@ enable_maintenance_mode() {
         fi
         
         if [[ "$bb_app_installed" == "yes" ]]; then
+            echo  # Add blank line before App prompt
             prompt "Enable BuddyBoss App's maintenance mode? (Y/N) [Default: Y]: "
             read -r enable_bb_app
             enable_bb_app=${enable_bb_app:-Y}
