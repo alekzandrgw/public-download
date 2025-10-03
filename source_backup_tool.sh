@@ -115,8 +115,6 @@ validate_directory() {
 }
 
 check_disk_space() {
-    log "Analyzing disk space requirements..."
-    
     # Get WordPress directory size
     local wp_size=$(du -sb "$WP_PATH" 2>/dev/null | cut -f1 || echo "0")
     
@@ -138,11 +136,11 @@ check_disk_space() {
     echo "Total backup size: $(numfmt --to=iec $total_size)"
     echo "Required space (with 10% buffer): $(numfmt --to=iec $required_space)"
     echo "Available disk space: $(numfmt --to=iec $available_space)"
-    echo
     
     # Check if site is larger than 10GB
     local ten_gb=$((10 * 1024 * 1024 * 1024))
     if [[ $total_size -gt $ten_gb ]]; then
+        echo
         warning "*** Large site detected (>10GB)!"
         
         if ! is_in_screen; then
@@ -165,6 +163,7 @@ check_disk_space() {
     # Check if enough space is available
     if [[ $available_space -lt $required_space ]]; then
         local needed=$((required_space - available_space))
+        echo
         error "*** INSUFFICIENT DISK SPACE!"
         error "You need $(numfmt --to=iec $needed) more disk space to safely complete this backup."
         error ""
@@ -192,7 +191,7 @@ collect_configuration() {
     WP_PATH="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WP_PATH" || exit 1
     
-    log "Analyzing WordPress installation..."
+    log "Analyzing WordPress installation and disk space requirements..."
     
     # Change to WordPress directory
     cd "$WP_PATH" || exit 1
@@ -202,22 +201,38 @@ collect_configuration() {
         exit 1
     fi
     
+    success "WordPress installation detected"
+    
     # Get site information
     SITE_URL=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
     DB_CHARSET=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
     
-    success "WordPress installation detected"
-    echo
+    # Get custom login URL if exists
+    CUSTOM_LOGIN_URL=$("$WP_CLI" option get whl_page --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "")
     
-    # Display detected values
-    info "Detected WordPress Information:"
+    echo
+    info "=== WordPress Information ==="
     echo "Site URL: $SITE_URL"
     echo "Database charset: $DB_CHARSET"
-    echo
+    if [[ -n "$CUSTOM_LOGIN_URL" ]]; then
+        echo "Login URL: /$CUSTOM_LOGIN_URL (custom)"
+    else
+        echo "Login URL: /wp-admin (default)"
+    fi
     
-    # Backup directory configuration
-    read_input "Enter backup directory path [\$HOME/wp_backups]: " "input" "false" "" "true"
-    BACKUP_DIR="${input:-$HOME/wp_backups}"
+    # Check for BuddyBoss and display info
+    check_buddyboss_info
+    
+    # Check disk space
+    check_disk_space
+    
+    echo
+    # Calculate default backup directory (one level up from WP_PATH)
+    local parent_dir=$(dirname "$WP_PATH")
+    local default_backup_dir="$parent_dir/wp_backups"
+    
+    read_input "Enter backup directory path [$default_backup_dir]: " "input" "false" "" "true"
+    BACKUP_DIR="${input:-$default_backup_dir}"
     
     # Create backup directory if it doesn't exist
     mkdir -p "$BACKUP_DIR"
@@ -225,33 +240,6 @@ collect_configuration() {
     # Set backup file paths
     DB_DUMP="$BACKUP_DIR/db_backup_$DATE.sql"
     WEB_ARCHIVE="$BACKUP_DIR/web_backup_$DATE.tar.gz"
-    
-    echo
-    
-    # Check disk space before proceeding
-    check_disk_space
-    
-    # Display configuration summary
-    echo
-    info "=== Configuration Summary ==="
-    echo "WordPress Root: $WP_PATH"
-    echo "Site URL: $SITE_URL"
-    echo "Database charset: $DB_CHARSET"
-    echo "Backup Directory: $BACKUP_DIR"
-    echo "Database Dump: $DB_DUMP"
-    echo "Web Archive: $WEB_ARCHIVE"
-    echo
-    
-    # Confirm configuration
-    prompt "Is this configuration correct? (Y/N) [Default: Y]: "
-    read -r confirm
-    # Accept empty input (Enter key) or Y/y as confirmation
-    if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
-        success "Configuration confirmed"
-    else
-        error "Configuration cancelled by user"
-        exit 1
-    fi
 }
 
 cleanup() {
@@ -299,24 +287,28 @@ check_prerequisites() {
     success "Prerequisites check passed"
 }
 
-check_buddyboss_installation() {
-    log "Checking for BuddyBoss components..."
-    
+check_buddyboss_info() {
     local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
     local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
     
-    echo
-    info "BuddyBoss Installation Status:"
-    echo "BuddyBoss App Plugin: $bb_app_installed"
-    echo "BuddyBoss Theme: $bb_theme_installed"
-    
-    if [[ "$bb_app_installed" == "yes" ]]; then
-        BB_APP_ID=$("$WP_CLI" option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
-        BB_APP_KEY=$("$WP_CLI" option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
-        echo "BuddyBoss App ID: $BB_APP_ID"
-        echo "BuddyBoss App Key: $BB_APP_KEY"
+    if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
+        echo
+        info "=== BuddyBoss Installation Found ==="
+        echo "BuddyBoss App Plugin: $bb_app_installed"
+        echo "BuddyBoss Theme: $bb_theme_installed"
+        
+        if [[ "$bb_app_installed" == "yes" ]]; then
+            BB_APP_ID=$("$WP_CLI" option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+            BB_APP_KEY=$("$WP_CLI" option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+            echo "BuddyBoss App ID: $BB_APP_ID"
+            echo "BuddyBoss App Key: $BB_APP_KEY"
+        fi
     fi
-    echo
+}
+
+check_buddyboss_installation() {
+    local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
+    local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
     
     # Return status for maintenance mode decision
     if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
@@ -327,7 +319,7 @@ check_buddyboss_installation() {
 }
 
 enable_maintenance_mode() {
-    log "Configuring maintenance mode..."
+    echo
     
     if check_buddyboss_installation; then
         # BuddyBoss detected
@@ -397,7 +389,6 @@ enable_maintenance_mode() {
     
     # Ask if maintenance mode should be disabled after backup
     if [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]]; then
-        echo
         prompt "Disable maintenance mode after backup completes? (y/N) [Default: N]: "
         read -r disable_maintenance
         if [[ "$disable_maintenance" =~ ^[Yy]$ ]]; then
@@ -408,8 +399,6 @@ enable_maintenance_mode() {
             info "Maintenance mode will remain enabled after backup"
         fi
     fi
-    
-    echo
 }
 
 disable_maintenance_mode() {
@@ -538,11 +527,54 @@ create_archive() {
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
+collect_server_configuration() {
+    # Cron jobs and PHP config already collected in collect_configuration
+    # Collect remaining items here
+    
+    # Collect cron jobs for litespeed user
+    CRON_JOBS=$(crontab -u "$CRON_USER" -l 2>/dev/null || echo "")
+    
+    # Collect custom PHP configuration
+    if [[ -f "$PHP_INI_PATH" ]]; then
+        CUSTOM_PHP_INI=$(cat "$PHP_INI_PATH" 2>/dev/null || echo "")
+    fi
+}
+
+confirm_configuration() {
+    echo
+    info "=== Configuration Summary ==="
+    echo "WordPress Root: $WP_PATH"
+    echo "Site URL: $SITE_URL"
+    echo "Database charset: $DB_CHARSET"
+    echo "Backup Directory: $BACKUP_DIR"
+    echo "Database Dump: $DB_DUMP"
+    echo "Web Archive: $WEB_ARCHIVE"
+    
+    if [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]] && [[ "$DISABLE_MAINTENANCE_ON_EXIT" == "true" ]]; then
+        echo "BuddyBoss maintenance modes disabled: True"
+    elif [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]]; then
+        echo "BuddyBoss maintenance modes disabled: False (will remain enabled)"
+    fi
+    
+    echo
+    
+    # Confirm configuration
+    prompt "Is this configuration correct? (Y/N) [Default: Y]: "
+    read -r confirm
+    # Accept empty input (Enter key) or Y/y as confirmation
+    if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
+        success "Configuration confirmed"
+        echo
+    else
+        error "Configuration cancelled by user"
+        exit 1
+    fi
+}
+
 export_configuration() {
     log "Exporting server configuration..."
     
     local config_file="$BACKUP_DIR/server_config_$DATE.txt"
-    local restore_script="$BACKUP_DIR/restore_config_$DATE.sh"
     
     # Create human-readable configuration file
     cat > "$config_file" << EOF
@@ -563,12 +595,15 @@ BB_APP_KEY=$BB_APP_KEY
 # To restore: crontab -u litespeed - < cron_jobs_${DATE}.txt
 EOF
 
+    success "Configuration exported to: server_config_$DATE.txt"
+
+    # Export cron jobs if any exist
     if [[ -n "$CRON_JOBS" ]]; then
         echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
         success "Cron jobs exported to: cron_jobs_$DATE.txt"
     fi
 
-    # Export custom PHP configuration
+    # Export custom PHP configuration if it exists
     if [[ -n "$CUSTOM_PHP_INI" ]]; then
         echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
         cat >> "$config_file" << EOF
@@ -580,52 +615,6 @@ EOF
 EOF
         success "Custom PHP config exported to: custom_php_$DATE.ini"
     fi
-
-    # Create automated restore script
-    cat > "$restore_script" << 'EOFSCRIPT'
-#!/bin/bash
-# WordPress Backup Restore Script
-# Auto-generated configuration restore script
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATE_STAMP="DATE_PLACEHOLDER"
-
-echo "=== WordPress Configuration Restore ==="
-echo
-
-# Restore custom PHP configuration
-if [[ -f "$SCRIPT_DIR/custom_php_${DATE_STAMP}.ini" ]]; then
-    echo -n "Restore custom PHP configuration? (y/N): "
-    read -r restore_php
-    if [[ "$restore_php" =~ ^[Yy]$ ]]; then
-        cp "$SCRIPT_DIR/custom_php_${DATE_STAMP}.ini" /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
-        systemctl restart lsws
-        echo "[OK] Custom PHP configuration restored"
-    fi
-fi
-
-# Restore cron jobs
-if [[ -f "$SCRIPT_DIR/cron_jobs_${DATE_STAMP}.txt" ]]; then
-    echo -n "Restore cron jobs for litespeed user? (y/N): "
-    read -r restore_cron
-    if [[ "$restore_cron" =~ ^[Yy]$ ]]; then
-        crontab -u litespeed "$SCRIPT_DIR/cron_jobs_${DATE_STAMP}.txt"
-        echo "[OK] Cron jobs restored"
-    fi
-fi
-
-echo
-echo "Configuration restore completed!"
-EOFSCRIPT
-
-    # Replace placeholder with actual date
-    sed -i "s/DATE_PLACEHOLDER/$DATE/g" "$restore_script"
-    chmod +x "$restore_script"
-    
-    success "Configuration exported to: server_config_$DATE.txt"
-    success "Restore script created: restore_config_$DATE.sh"
     
     echo
 }
@@ -662,9 +651,6 @@ verify_backup() {
     if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
         echo "  [OK] custom_php_$DATE.ini"
     fi
-    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
-        echo "  [OK] restore_config_$DATE.sh"
-    fi
     
     echo
     success "Backup verification completed successfully"
@@ -692,9 +678,6 @@ display_summary() {
     if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
         echo "   - PHP config: custom_php_$DATE.ini"
     fi
-    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
-        echo "   - Restore script: restore_config_$DATE.sh"
-    fi
     echo
     
     # Display important configuration values
@@ -712,7 +695,7 @@ display_summary() {
     
     if [[ -n "$CRON_JOBS" ]]; then
         local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^$' | wc -l)
-        echo "   - Cron jobs: $cron_count job(s) detected"
+        echo "   - Cron jobs: $cron_count job(s) backed up"
     fi
     
     if [[ -n "$CUSTOM_PHP_INI" ]]; then
@@ -726,8 +709,11 @@ display_summary() {
     if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
         echo "   - $BACKUP_DIR/server_config_$DATE.txt"
     fi
-    if [[ -f "$BACKUP_DIR/restore_config_$DATE.sh" ]]; then
-        echo "   - $BACKUP_DIR/restore_config_$DATE.sh"
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "   - $BACKUP_DIR/cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "   - $BACKUP_DIR/custom_php_$DATE.ini"
     fi
     echo
     echo "==============================================================="
@@ -742,10 +728,13 @@ main() {
     echo
     
     collect_configuration
-    check_prerequisites
     enable_maintenance_mode
+    confirm_configuration
+    check_prerequisites
     export_database
     create_archive
+    collect_server_configuration
+    export_configuration
     verify_backup
     display_summary
 }
