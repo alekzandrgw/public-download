@@ -545,32 +545,32 @@ export_configuration() {
     local restore_script="$BACKUP_DIR/restore_config_$DATE.sh"
     
     # Create human-readable configuration file
-    cat > "$config_file" << 'EOF'
+    cat > "$config_file" << 'CONFIGEOF'
 # WordPress Backup Configuration
-# Generated: $(date +'%Y-%m-%d %H:%M:%S')
-# Site URL: $SITE_URL
+# Generated: TIMESTAMP_PLACEHOLDER
+# Site URL: SITEURL_PLACEHOLDER
 
 ## Site Information
-SITE_URL=$SITE_URL
-DB_CHARSET=$DB_CHARSET
-CUSTOM_LOGIN_URL=$CUSTOM_LOGIN_URL
+SITE_URL=SITEURL_PLACEHOLDER
+DB_CHARSET=CHARSET_PLACEHOLDER
+CUSTOM_LOGIN_URL=LOGINURL_PLACEHOLDER
 
 ## BuddyBoss Configuration
-BB_APP_ID=$BB_APP_ID
-BB_APP_KEY=$BB_APP_KEY
+BB_APP_ID=APPID_PLACEHOLDER
+BB_APP_KEY=APPKEY_PLACEHOLDER
 
 ## Cron Jobs (litespeed user)
-# To restore: crontab -u litespeed - < cron_jobs_${DATE}.txt
-EOF
+# To restore: crontab -u litespeed - < cron_jobs_DATE_PLACEHOLDER.txt
+CONFIGEOF
 
-    # Use sed to replace variables in the config file
-    sed -i "s|\$(date +'%Y-%m-%d %H:%M:%S')|$(date +'%Y-%m-%d %H:%M:%S')|g" "$config_file"
-    sed -i "s|\$SITE_URL|$SITE_URL|g" "$config_file"
-    sed -i "s|\$DB_CHARSET|$DB_CHARSET|g" "$config_file"
-    sed -i "s|\$CUSTOM_LOGIN_URL|$CUSTOM_LOGIN_URL|g" "$config_file"
-    sed -i "s|\$BB_APP_ID|$BB_APP_ID|g" "$config_file"
-    sed -i "s|\$BB_APP_KEY|$BB_APP_KEY|g" "$config_file"
-    sed -i "s|\${DATE}|${DATE}|g" "$config_file"
+    # Use sed to replace placeholders in the config file
+    sed -i "s|TIMESTAMP_PLACEHOLDER|$(date +'%Y-%m-%d %H:%M:%S')|g" "$config_file"
+    sed -i "s|SITEURL_PLACEHOLDER|$SITE_URL|g" "$config_file"
+    sed -i "s|CHARSET_PLACEHOLDER|$DB_CHARSET|g" "$config_file"
+    sed -i "s|LOGINURL_PLACEHOLDER|$CUSTOM_LOGIN_URL|g" "$config_file"
+    sed -i "s|APPID_PLACEHOLDER|$BB_APP_ID|g" "$config_file"
+    sed -i "s|APPKEY_PLACEHOLDER|$BB_APP_KEY|g" "$config_file"
+    sed -i "s|DATE_PLACEHOLDER|$DATE|g" "$config_file"
 
     if [[ -n "$CRON_JOBS" ]]; then
         echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
@@ -580,20 +580,20 @@ EOF
     # Export custom PHP configuration
     if [[ -n "$CUSTOM_PHP_INI" ]]; then
         echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
-        cat >> "$config_file" << 'EOF'
+        cat >> "$config_file" << 'PHPEOF'
 
 ## Custom PHP Configuration
-# Original file: $PHP_INI_PATH
-# To restore: cp custom_php_${DATE}.ini /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
+# Original file: PHPINI_PLACEHOLDER
+# To restore: cp custom_php_DATE_PLACEHOLDER.ini /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
 # Then restart: systemctl restart lsws
-EOF
-        sed -i "s|\$PHP_INI_PATH|$PHP_INI_PATH|g" "$config_file"
-        sed -i "s|\${DATE}|${DATE}|g" "$config_file"
+PHPEOF
+        sed -i "s|PHPINI_PLACEHOLDER|$PHP_INI_PATH|g" "$config_file"
+        sed -i "s|DATE_PLACEHOLDER|$DATE|g" "$config_file"
         success "Custom PHP config exported to: custom_php_$DATE.ini"
     fi
 
     # Create automated restore script
-    cat > "$restore_script" << 'EOFSCRIPT'
+    cat > "$restore_script" << 'RESTORESCRIPT'
 #!/bin/bash
 # WordPress Backup Restore Script
 # Auto-generated configuration restore script
@@ -629,7 +629,7 @@ fi
 
 echo
 echo "Configuration restore completed!"
-EOFSCRIPT
+RESTORESCRIPT
 
     # Replace placeholder with actual date
     sed -i "s/DATE_PLACEHOLDER/$DATE/g" "$restore_script"
