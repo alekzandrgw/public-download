@@ -700,7 +700,7 @@ display_summary() {
     if [[ -n "$CUSTOM_LOGIN_URL" ]]; then
         echo "   - Custom Login URL: /$CUSTOM_LOGIN_URL"
     else
-        echo "   - Custom Login URL: /wp-admin (default)"
+        echo "   - Login URL: /wp-admin (default)"
     fi
     
     if [[ -n "$BB_APP_ID" ]] && [[ "$BB_APP_ID" != "N/A" ]]; then
