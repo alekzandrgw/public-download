@@ -711,29 +711,7 @@ display_summary() {
     fi
     
     if [[ -n "$CRON_JOBS" ]]; then
-        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^
-
-main() {
-    echo
-    echo "==============================================================="
-    info "         WordPress Local Backup Tool v1.0"
-    echo "==============================================================="
-    echo
-    
-    collect_configuration
-    check_prerequisites
-    check_buddyboss_installation
-    detect_site_configuration
-    enable_maintenance_mode
-    export_database
-    create_archive
-    export_configuration
-    verify_backup
-    display_summary
-}
-
-# Run main function
-main | wc -l)
+        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^$' | wc -l)
         echo "   - Cron jobs: $cron_count job(s) detected"
     fi
     
