@@ -606,8 +606,8 @@ CUSTOM_LOGIN_URL=$CUSTOM_LOGIN_URL
 BB_APP_ID=$BB_APP_ID
 BB_APP_KEY=$BB_APP_KEY
 
-## Cron Jobs (litespeed user)
-# To restore: crontab -u litespeed - < cron_jobs_${DATE}.txt
+## Cron Jobs
+# To restore: crontab -u $LOGNAME - < cron_jobs_${DATE}.txt
 EOF
 
     success "Configuration exported to: server_config_$DATE.txt"
@@ -625,8 +625,8 @@ EOF
 
 ## Custom PHP Configuration
 # Original file: $PHP_INI_PATH
-# To restore: cp custom_php_${DATE}.ini /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
-# Then restart: systemctl restart lsws
+# To restore: cp custom_php_${DATE}.ini /home/$LOGNAME/web/php/998-rapyd.ini
+# Then restart (as root): lswsctrl condrestart
 EOF
         success "Custom PHP config exported to: custom_php_$DATE.ini"
     fi
