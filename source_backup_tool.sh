@@ -38,11 +38,32 @@ mkdir -p "$BACKUP_DIR"
 
 cd "$WP_PATH"
 
+# Check requirements
+if [[ ! -f "$WP_CLI" ]]; then
+    echo "WP-CLI not found at $WP_CLI"
+    exit 1
+fi
+
+if [[ ! -f "$WP_PATH/wp-config.php" ]]; then
+    echo "WordPress installation not found at $WP_PATH"
+    exit 1
+fi
+
+# Check if numfmt exists
+if ! command -v numfmt >/dev/null 2>&1; then
+    numfmt() { cat; }  # Fallback if numfmt not available
+fi
+
+# Make temp files unique to this run
+TMP_PREFIX="/tmp/wp-backup-${DATE}"
+TMP_DB_EXPORT="${TMP_PREFIX}-db.sql"
+TMP_DB_ERR="${TMP_PREFIX}-db.err"
+
 # 1. Site Details
 echo "Gathering site details..."
 
 SITE_URL=$($WP_CLI option get siteurl --allow-root --skip-plugins --skip-themes) || { echo "Failed to get site URL. Check WP_CLI path and permissions."; exit 1; }
-DB_CHARSET=$($WP_CLI eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes | tr -d '\n') || { echo "Failed to get DB charset."; exit 1; }
+DB_CHARSET=$($WP_CLI eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes 2>/dev/null | tr -d '\n' || echo "utf8") || { echo "Failed to get DB charset."; exit 1; }
 WEB_SIZE=$(du -sh . | awk '{print $1}')
 DB_SIZE_BYTES=$($WP_CLI db size --allow-root --size_format=b --skip-plugins --skip-themes | grep "Database size" | awk '{print $3}') || { echo "Failed to get DB size."; exit 1; }
 DB_SIZE=$(numfmt --to=iec $DB_SIZE_BYTES)
@@ -134,9 +155,6 @@ fi
 # 4. Database Export
 echo "Exporting database..."
 
-TMP_DB_EXPORT="../stg-db-export.sql"
-TMP_DB_ERR="../stg-db-export.err"
-
 "$WP_CLI" db export "$TMP_DB_EXPORT" --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>"$TMP_DB_ERR" || true &
 export_pid=$!
 
@@ -164,7 +182,10 @@ echo "Database exported to $DB_DUMP"
 
 # 5. Web Files Compression
 echo "Compressing web files..."
-tar czf "$WEB_ARCHIVE" "${EXCLUDES[@]}" .
+if ! tar czf "$WEB_ARCHIVE" "${EXCLUDES[@]}" .; then
+    echo "Failed to create archive"
+    exit 1
+fi
 echo "Web files archived to $WEB_ARCHIVE"
 
 # 6. Summary
@@ -182,3 +203,13 @@ if [[ "$BB_APP_INSTALLED" == "yes" ]]; then
 fi
 echo "----------------------------------------"
 echo "Backup files are ready in $BACKUP_DIR"
+
+# Clean up temp files
+cleanup() {
+    # Remove temp files
+    rm -f "${TMP_PREFIX}"*
+    echo "Temporary files cleaned up"
+}
+
+# Register cleanup on script exit
+trap cleanup EXIT
