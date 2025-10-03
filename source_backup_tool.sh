@@ -545,7 +545,7 @@ export_configuration() {
     local restore_script="$BACKUP_DIR/restore_config_$DATE.sh"
     
     # Create human-readable configuration file
-    cat > "$config_file" << EOF
+    cat > "$config_file" << 'EOF'
 # WordPress Backup Configuration
 # Generated: $(date +'%Y-%m-%d %H:%M:%S')
 # Site URL: $SITE_URL
@@ -563,6 +563,15 @@ BB_APP_KEY=$BB_APP_KEY
 # To restore: crontab -u litespeed - < cron_jobs_${DATE}.txt
 EOF
 
+    # Use sed to replace variables in the config file
+    sed -i "s|\$(date +'%Y-%m-%d %H:%M:%S')|$(date +'%Y-%m-%d %H:%M:%S')|g" "$config_file"
+    sed -i "s|\$SITE_URL|$SITE_URL|g" "$config_file"
+    sed -i "s|\$DB_CHARSET|$DB_CHARSET|g" "$config_file"
+    sed -i "s|\$CUSTOM_LOGIN_URL|$CUSTOM_LOGIN_URL|g" "$config_file"
+    sed -i "s|\$BB_APP_ID|$BB_APP_ID|g" "$config_file"
+    sed -i "s|\$BB_APP_KEY|$BB_APP_KEY|g" "$config_file"
+    sed -i "s|\${DATE}|${DATE}|g" "$config_file"
+
     if [[ -n "$CRON_JOBS" ]]; then
         echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
         success "Cron jobs exported to: cron_jobs_$DATE.txt"
@@ -571,13 +580,15 @@ EOF
     # Export custom PHP configuration
     if [[ -n "$CUSTOM_PHP_INI" ]]; then
         echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
-        cat >> "$config_file" << EOF
+        cat >> "$config_file" << 'EOF'
 
 ## Custom PHP Configuration
 # Original file: $PHP_INI_PATH
 # To restore: cp custom_php_${DATE}.ini /usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini
 # Then restart: systemctl restart lsws
 EOF
+        sed -i "s|\$PHP_INI_PATH|$PHP_INI_PATH|g" "$config_file"
+        sed -i "s|\${DATE}|${DATE}|g" "$config_file"
         success "Custom PHP config exported to: custom_php_$DATE.ini"
     fi
 
