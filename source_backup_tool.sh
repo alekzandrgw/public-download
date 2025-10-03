@@ -41,10 +41,10 @@ cd "$WP_PATH"
 # 1. Site Details
 echo "Gathering site details..."
 
-SITE_URL=$($WP_CLI option get siteurl --allow-root --skip-plugins --skip-themes)
-DB_CHARSET=$($WP_CLI db query "SHOW VARIABLES LIKE 'character_set_database';" --allow-root --skip-plugins --skip-themes --skip-column-names | awk '{print $2}')
+SITE_URL=$($WP_CLI option get siteurl --allow-root --skip-plugins --skip-themes) || { echo "Failed to get site URL. Check WP_CLI path and permissions."; exit 1; }
+DB_CHARSET=$($WP_CLI eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes | tr -d '\n') || { echo "Failed to get DB charset."; exit 1; }
 WEB_SIZE=$(du -sh . | awk '{print $1}')
-DB_SIZE_BYTES=$($WP_CLI db size --allow-root --size_format=b --skip-plugins --skip-themes | grep "Database size" | awk '{print $3}')
+DB_SIZE_BYTES=$($WP_CLI db size --allow-root --size_format=b --skip-plugins --skip-themes | grep "Database size" | awk '{print $3}') || { echo "Failed to get DB size."; exit 1; }
 DB_SIZE=$(numfmt --to=iec $DB_SIZE_BYTES)
 TOTAL_SIZE_BYTES=$(($(du -sb . | awk '{print $1}') + $DB_SIZE_BYTES))
 TOTAL_SIZE=$(numfmt --to=iec $TOTAL_SIZE_BYTES)
