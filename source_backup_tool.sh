@@ -124,7 +124,7 @@ fi
 
 # 2. Disk Analysis
 log "Analyzing disk space..."
-AVAIL_DISK_BYTES=$(df --output=avail . | tail -1)
+AVAIL_DISK_BYTES=$(df -B1 --output=avail . | head -2 | tail -1)
 REQUIRED_BYTES=$(echo "$TOTAL_SIZE_BYTES * 1.1" | bc | awk '{print int($1)}')
 REQUIRED_HR=$(numfmt --to=iec $REQUIRED_BYTES)
 AVAIL_HR=$(numfmt --to=iec $AVAIL_DISK_BYTES)
