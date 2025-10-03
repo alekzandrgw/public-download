@@ -7,7 +7,7 @@ set -euo pipefail
 
 # CONFIGURATION
 WP_PATH="/var/www/webroot/ROOT"
-WP_CLI="/usr/local/bin/wp"
+WP_CLI="/home/litespeed/bin/wp"
 BACKUP_DIR="$HOME/wp_backups"
 DATE=$(date +"%Y%m%d_%H%M%S")
 DB_DUMP="$BACKUP_DIR/db_backup_$DATE.sql"
@@ -41,17 +41,17 @@ cd "$WP_PATH"
 # 1. Site Details
 echo "Gathering site details..."
 
-SITE_URL=$($WP_CLI option get siteurl --skip-plugins --skip-themes)
-DB_CHARSET=$($WP_CLI db query "SHOW VARIABLES LIKE 'character_set_database';" --skip-plugins --skip-themes --skip-column-names | awk '{print $2}')
+SITE_URL=$($WP_CLI option get siteurl --allow-root --skip-plugins --skip-themes)
+DB_CHARSET=$($WP_CLI db query "SHOW VARIABLES LIKE 'character_set_database';" --allow-root --skip-plugins --skip-themes --skip-column-names | awk '{print $2}')
 WEB_SIZE=$(du -sh . | awk '{print $1}')
-DB_SIZE_BYTES=$($WP_CLI db size --size_format=b --skip-plugins --skip-themes | grep "Database size" | awk '{print $3}')
+DB_SIZE_BYTES=$($WP_CLI db size --allow-root --size_format=b --skip-plugins --skip-themes | grep "Database size" | awk '{print $3}')
 DB_SIZE=$(numfmt --to=iec $DB_SIZE_BYTES)
 TOTAL_SIZE_BYTES=$(($(du -sb . | awk '{print $1}') + $DB_SIZE_BYTES))
 TOTAL_SIZE=$(numfmt --to=iec $TOTAL_SIZE_BYTES)
 
 # BuddyBoss checks
-BB_APP_INSTALLED=$($WP_CLI plugin list --skip-plugins --skip-themes | grep -q "buddyboss-app" && echo "yes" || echo "no")
-BB_THEME_INSTALLED=$($WP_CLI theme list --skip-plugins --skip-themes | grep -q "buddyboss-theme" && echo "yes" || echo "no")
+BB_APP_INSTALLED=$($WP_CLI plugin list --allow-root --skip-plugins --skip-themes | grep -q "buddyboss-app" && echo "yes" || echo "no")
+BB_THEME_INSTALLED=$($WP_CLI theme list --allow-root --skip-plugins --skip-themes | grep -q "buddyboss-theme" && echo "yes" || echo "no")
 
 echo "Site URL: $SITE_URL"
 echo "Database Charset: $DB_CHARSET"
@@ -62,8 +62,8 @@ echo "BuddyBoss App Plugin Installed: $BB_APP_INSTALLED"
 echo "BuddyBoss Theme Installed: $BB_THEME_INSTALLED"
 
 if [[ "$BB_APP_INSTALLED" == "yes" ]]; then
-    BB_APP_ID=$($WP_CLI option pluck bbapps bbapp_app_id --skip-plugins --skip-themes)
-    BB_APP_KEY=$($WP_CLI option pluck bbapps bbapp_app_key --skip-plugins --skip-themes)
+    BB_APP_ID=$($WP_CLI option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes)
+    BB_APP_KEY=$($WP_CLI option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes)
     echo "BuddyBoss App ID: $BB_APP_ID"
     echo "BuddyBoss App Key: $BB_APP_KEY"
 fi
@@ -97,8 +97,8 @@ if [[ "$BB_APP_INSTALLED" == "yes" || "$BB_THEME_INSTALLED" == "yes" ]]; then
     read -p "Enable BuddyBoss Theme's maintenance mode? [Y/N] - Default [Y]: " ENABLE_BB_THEME
     ENABLE_BB_THEME=${ENABLE_BB_THEME:-Y}
     if [[ "$ENABLE_BB_THEME" =~ ^[Yy]$ && "$BB_THEME_INSTALLED" == "yes" ]]; then
-        $WP_CLI option patch update buddyboss_theme_options maintenance_mode 1 --skip-themes --skip-plugins
-        MODE=$($WP_CLI option pluck buddyboss_theme_options maintenance_mode --skip-themes --skip-plugins)
+        $WP_CLI option patch update buddyboss_theme_options maintenance_mode 1 --allow-root --skip-themes --skip-plugins
+        MODE=$($WP_CLI option pluck buddyboss_theme_options maintenance_mode --allow-root --skip-themes --skip-plugins)
         if [[ "$MODE" != "1" ]]; then
             echo "Failed to enable BuddyBoss Theme maintenance mode."
             exit 1
@@ -109,8 +109,8 @@ if [[ "$BB_APP_INSTALLED" == "yes" || "$BB_THEME_INSTALLED" == "yes" ]]; then
     read -p "Enable BuddyBoss App's maintenance mode? [Y/N] - Default [Y]: " ENABLE_BB_APP
     ENABLE_BB_APP=${ENABLE_BB_APP:-Y}
     if [[ "$ENABLE_BB_APP" =~ ^[Yy]$ && "$BB_APP_INSTALLED" == "yes" ]]; then
-        $WP_CLI option patch update bbapp_settings app_maintenance_mode 1 --skip-themes --skip-plugins
-        MODE=$($WP_CLI option pluck bbapp_settings app_maintenance_mode --skip-themes --skip-plugins)
+        $WP_CLI option patch update bbapp_settings app_maintenance_mode 1 --allow-root --skip-themes --skip-plugins
+        MODE=$($WP_CLI option pluck bbapp_settings app_maintenance_mode --allow-root --skip-themes --skip-plugins)
         if [[ "$MODE" != "1" ]]; then
             echo "Failed to enable BuddyBoss App maintenance mode."
             exit 1
@@ -121,8 +121,8 @@ else
     read -p "Set WordPress in maintenance mode? [Y/N] - Default [Y]: " ENABLE_WP_MAINT
     ENABLE_WP_MAINT=${ENABLE_WP_MAINT:-Y}
     if [[ "$ENABLE_WP_MAINT" =~ ^[Yy]$ ]]; then
-        $WP_CLI plugin install simple-maintenance --activate --skip-themes --skip-plugins
-        ACTIVE=$($WP_CLI plugin is-active simple-maintenance --skip-themes --skip-plugins && echo "active" || echo "inactive")
+        $WP_CLI plugin install simple-maintenance --activate --allow-root --skip-themes --skip-plugins
+        ACTIVE=$($WP_CLI plugin is-active simple-maintenance --allow-root --skip-themes --skip-plugins && echo "active" || echo "inactive")
         if [[ "$ACTIVE" != "active" ]]; then
             echo "Failed to activate maintenance mode plugin."
             exit 1
@@ -137,7 +137,7 @@ echo "Exporting database..."
 TMP_DB_EXPORT="../stg-db-export.sql"
 TMP_DB_ERR="../stg-db-export.err"
 
-"$WP_CLI" db export "$TMP_DB_EXPORT" --default-character-set="$DB_CHARSET" --skip-plugins --skip-themes --quiet --force 2>"$TMP_DB_ERR" || true &
+"$WP_CLI" db export "$TMP_DB_EXPORT" --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>"$TMP_DB_ERR" || true &
 export_pid=$!
 
 while kill -0 $export_pid 2>/dev/null; do
