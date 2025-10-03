@@ -482,6 +482,12 @@ create_archive() {
     local webroot_size=$(du -sb "$WP_PATH" 2>/dev/null | cut -f1 || echo "0")
     info "Archiving $(numfmt --to=iec $webroot_size) of data..."
     
+    # Make temp files unique to this run
+    local tmp_tar_err="/tmp/wp-backup-${DATE}-tar.err"
+    
+    # Add to temp files list for cleanup
+    TEMP_FILES="$TEMP_FILES $tmp_tar_err"
+    
     # Create archive with exclusions in background
     tar -czf "$WEB_ARCHIVE" \
         --exclude='wp-content/ai1wm-backups' \
@@ -503,7 +509,7 @@ create_archive() {
         --exclude='wp-content/smush-webp' \
         --exclude='wp-content/uploads/wp-file-manager-pro/fm_backup' \
         --exclude='*.log' \
-        -C "$WP_PATH" . 2>/dev/null &
+        -C "$WP_PATH" . 2>"$tmp_tar_err" || true &
     local tar_pid=$!
     
     # Monitor progress
@@ -521,8 +527,14 @@ create_archive() {
     
     echo # New line after progress
     
-    if [[ $exit_status -ne 0 ]]; then
-        error "Failed to create archive"
+    # Show any errors from tar (but do not exit unless tar failed)
+    if [[ -s "$tmp_tar_err" ]]; then
+        warning "Non-fatal errors during archive creation (see below):"
+        cat "$tmp_tar_err"
+    fi
+    
+    if [[ $exit_status -ne 0 ]] || [[ ! -s "$WEB_ARCHIVE" ]]; then
+        error "Archive creation failed"
         exit 1
     fi
     
