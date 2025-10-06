@@ -818,7 +818,7 @@ display_summary() {
     fi
     
     if [[ -n "$CRON_JOBS" ]]; then
-        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^ | wc -l)
+        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^$' | wc -l)
         echo "   - Cron jobs: $cron_count job(s) backed up"
     fi
     
