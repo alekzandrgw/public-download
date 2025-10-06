@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# WordPress S3 Backup Script (Simplified with rclone copy)
-# Run as root: ./backup_wordpress.sh
+# WordPress Local Backup Tool
+# Run as root: ./wordpress_backup.sh
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
@@ -14,15 +14,28 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Global variables
-AWS_ACCESS_KEY=""
-AWS_SECRET_KEY=""
-AWS_REGION=""
-S3_BUCKET=""
-WEBROOT=""
+WP_PATH=""
 SITE_URL=""
 DB_CHARSET=""
+BACKUP_DIR=""
+DATE=$(date +"%Y%m%d_%H%M%S")
+DB_DUMP=""
+WEB_ARCHIVE=""
 TEMP_FILES=""
 WP_CLI="/home/litespeed/bin/wp"
+MIN_SCREEN_SIZE_GB=10
+MAINTENANCE_MODE_ENABLED=false
+MAINTENANCE_TYPE=""
+DISABLE_MAINTENANCE_ON_EXIT=false
+
+# Site configuration variables
+CUSTOM_LOGIN_URL=""
+BB_APP_ID=""
+BB_APP_KEY=""
+CRON_JOBS=""
+CUSTOM_PHP_INI=""
+PHP_INI_PATH="/usr/local/lsws/lsphp/etc/php.d/998-rapyd.ini"
+CRON_USER="litespeed"
 
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
@@ -87,161 +100,47 @@ is_in_screen() {
     [[ -n "${STY:-}" ]] || [[ -n "${TMUX:-}" ]]
 }
 
-# Detect AWS region from site URL
-detect_aws_region() {
-    local url="$1"
-    
-    # Check for region indicators in URL
-    if [[ "$url" =~ ew1 ]]; then
-        echo "eu-west-1"
-    elif [[ "$url" =~ ue1 ]]; then
-        echo "us-east-1"
-    elif [[ "$url" =~ uw2 ]]; then
-        echo "us-west-2"
-    else
-        # Default to us-east-1 if no match
-        echo "us-east-1"
-    fi
-}
-
-# Get bucket name based on region
-get_bucket_for_region() {
-    case "$1" in
-        eu-west-1) echo "staging-site-backups-euwest" ;;
-        us-east-1) echo "staging-site-backups-useast" ;;
-        us-west-2) echo "staging-site-backups-uswest" ;;
-        *) echo "" ;;
-    esac
-}
-
-# Get human-readable region name
-get_region_name() {
-    case "$1" in
-        eu-west-1) echo "Europe (Ireland)" ;;
-        us-east-1) echo "US East (N. Virginia)" ;;
-        us-west-2) echo "US West (Oregon)" ;;
-        *) echo "Unknown Region" ;;
-    esac
-}
-
-# Select AWS region and bucket interactively
-select_region_and_bucket() {
-    local default_region="$1"
-    local default_bucket=$(get_bucket_for_region "$default_region")
-    
-    echo
-    info "Available S3 Backup Locations:"
-    echo "  1) Europe (Ireland) - eu-west-1 → staging-site-backups-euwest"
-    echo "  2) US East (N. Virginia) - us-east-1 → staging-site-backups-useast"
-    echo "  3) US West (Oregon) - us-west-2 → staging-site-backups-uswest"
-    echo "  4) Custom (enter your own region and bucket)"
-    echo
-    
-    if [[ -n "$default_region" ]] && [[ -n "$default_bucket" ]]; then
-        prompt "Select backup location [detected: $(get_region_name $default_region) - Press Enter to accept]: "
-    else
-        prompt "Select backup location (1-4): "
-    fi
-    
-    read region_input
-    
-    # If empty and default exists, use default
-    if [[ -z "$region_input" ]] && [[ -n "$default_region" ]]; then
-        AWS_REGION="$default_region"
-        S3_BUCKET="$default_bucket"
-        return
-    fi
-    
-    # Map number to region and bucket
-    case "$region_input" in
-        1) 
-            AWS_REGION="eu-west-1"
-            S3_BUCKET="staging-site-backups-euwest"
-            ;;
-        2) 
-            AWS_REGION="us-east-1"
-            S3_BUCKET="staging-site-backups-useast"
-            ;;
-        3) 
-            AWS_REGION="us-west-2"
-            S3_BUCKET="staging-site-backups-uswest"
-            ;;
-        4)
-            # Custom region and bucket
-            prompt "Enter custom AWS region (e.g., eu-west-1): "
-            read custom_region
-            if [[ ! "$custom_region" =~ ^[a-z]{2,3}-[a-z]+-[0-9]$ ]]; then
-                error "Invalid region format. Using default: $default_region"
-                AWS_REGION="$default_region"
-                S3_BUCKET="$default_bucket"
-            else
-                AWS_REGION="$custom_region"
-                read_input "Enter custom S3 bucket name: " "S3_BUCKET" "false" "validate_s3_bucket"
-            fi
-            ;;
-        "")
-            # Empty input with no default
-            error "No selection made. Using default: $default_region"
-            AWS_REGION="$default_region"
-            S3_BUCKET="$default_bucket"
-            ;;
-        *)
-            error "Invalid selection. Using default: $default_region"
-            AWS_REGION="$default_region"
-            S3_BUCKET="$default_bucket"
-            ;;
-    esac
-}
-
 # Validation functions
-validate_s3_bucket() {
-    local bucket="$1"
-    # Basic S3 bucket name validation
-    if [[ ! "$bucket" =~ ^[a-z0-9][a-z0-9\-]*[a-z0-9]$ ]] || [[ ${#bucket} -lt 3 ]] || [[ ${#bucket} -gt 63 ]]; then
-        error "Invalid S3 bucket name. Must be 3-63 chars, lowercase, numbers, hyphens only"
-        return 1
-    fi
-    return 0
-}
-
 validate_directory() {
     local dir="$1"
     if [[ ! -d "$dir" ]]; then
         error "Directory '$dir' does not exist"
         return 1
     fi
+    if [[ ! -f "$dir/wp-config.php" ]]; then
+        error "WordPress installation not found at '$dir'"
+        return 1
+    fi
     return 0
 }
 
 check_disk_space() {
-    log "Analyzing disk space requirements..."
+    # Get WordPress directory size
+    local wp_size=$(du -sb "$WP_PATH" 2>/dev/null | cut -f1 || echo "0")
     
-    # Get ROOT directory size
-    local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
-    
-    # Get database size estimate (current size of database)
+    # Get database size estimate
     local db_size=0
     db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
     
-    local total_size=$((root_size + db_size))
+    local total_size=$((wp_size + db_size))
     local required_space=$((total_size * 110 / 100))  # Add 10% buffer
     
-    # Get available space on the partition containing WEBROOT
-    local available_space=$(df -B1 "$WEBROOT/../" | awk 'NR==2 {print $4}')
+    # Get available space on the partition containing WP_PATH
+    local available_space=$(df -B1 "$WP_PATH" | awk 'NR==2 {print $4}')
     
     # Display sizes
     echo
     info "=== Disk Space Analysis ==="
-    echo "WordPress files size: $(numfmt --to=iec $root_size)"
+    echo "WordPress files size: $(numfmt --to=iec $wp_size)"
     echo "Database size (est.): $(numfmt --to=iec $db_size)"
     echo "Total backup size: $(numfmt --to=iec $total_size)"
     echo "Required space (with 10% buffer): $(numfmt --to=iec $required_space)"
     echo "Available disk space: $(numfmt --to=iec $available_space)"
-    echo
     
     # Check if site is larger than 10GB
     local ten_gb=$((10 * 1024 * 1024 * 1024))
     if [[ $total_size -gt $ten_gb ]]; then
+        echo
         warning "*** Large site detected (>10GB)!"
         
         if ! is_in_screen; then
@@ -253,7 +152,7 @@ check_disk_space() {
             if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
                 error "Backup cancelled. Please run this script in a screen session:"
                 error "  screen -S backup"
-                error "  ./backup_wordpress.sh"
+                error "  ./wordpress_backup.sh"
                 exit 1
             fi
         else
@@ -264,6 +163,7 @@ check_disk_space() {
     # Check if enough space is available
     if [[ $available_space -lt $required_space ]]; then
         local needed=$((required_space - available_space))
+        echo
         error "*** INSUFFICIENT DISK SPACE!"
         error "You need $(numfmt --to=iec $needed) more disk space to safely complete this backup."
         error ""
@@ -282,115 +182,81 @@ check_disk_space() {
 
 collect_configuration() {
     echo
-    info "=== WordPress S3 Backup Configuration ==="
+    info "=== WordPress Local Backup Configuration ==="
     echo
     
-    # WordPress Configuration (ask first to get site URL for region detection)
+    # WordPress Configuration
     info "WordPress Configuration:"
     read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
-    WEBROOT="${input:-/var/www/webroot/ROOT}"
-    validate_directory "$WEBROOT" || exit 1
+    WP_PATH="${input:-/var/www/webroot/ROOT}"
+    validate_directory "$WP_PATH" || exit 1
     
-    log "Analyzing WordPress installation..."
+    log "Analyzing WordPress installation and disk space requirements..."
     
-    # Get WordPress info early for better defaults
-    cd "$WEBROOT" || exit 1
+    # Change to WordPress directory
+    cd "$WP_PATH" || exit 1
     
     if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
-        error "WordPress not installed in '$WEBROOT'"
+        error "WordPress not installed in '$WP_PATH'"
         exit 1
     fi
-    
-    # Get site URL for region detection
-    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
-    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
     
     success "WordPress installation detected"
-    echo
     
-    # Detect suggested AWS region and bucket based on site URL
-    local suggested_region=$(detect_aws_region "$detected_url")
-    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
-
-    # Display detected values
-    info "Detected WordPress Information:"
-    echo "Site URL: $detected_url"
-    echo "Database charset: $detected_charset"
-    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
-    echo "Suggested S3 Bucket: $suggested_bucket"
+    # Get site information
+    SITE_URL=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
+    DB_CHARSET=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
+    
+    # Get custom login URL if exists
+    CUSTOM_LOGIN_URL=$("$WP_CLI" option get whl_page --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "")
+    
     echo
-
-    # Check disk space before proceeding with further prompts
-    check_disk_space
-
-    # Allow customization after disk space check
-    prompt "Custom destination folder name: Press Enter to accept [Detected: $detected_url]: "
-    read custom_url
-    SITE_URL="${custom_url:-$detected_url}"
-
-    prompt "Custom database charset: Press Enter to accept [Detected: $detected_charset]: "
-    read custom_charset
-    DB_CHARSET="${custom_charset:-$detected_charset}"
-
-    echo
-
-    # Detect suggested AWS region based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
-    # AWS Configuration
-    info "AWS Configuration:"
-    read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
-    read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
-
-    # Region and bucket selection with smart default
-    select_region_and_bucket "$suggested_region"
-
-    # Display configuration summary
-    echo
-    info "=== Configuration Summary ==="
-    echo "WordPress Root: $WEBROOT"
+    info "=== WordPress Information ==="
     echo "Site URL: $SITE_URL"
     echo "Database charset: $DB_CHARSET"
-    echo "AWS Region: $(get_region_name $AWS_REGION) ($AWS_REGION)"
-    echo "S3 Bucket: $S3_BUCKET"
-    echo
-
-    # Confirm configuration
-    prompt "Is this configuration correct? (Y/N) [Default: Y]"
-    read -r confirm
-    # Accept empty input (Enter key) or Y/y as confirmation
-    if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
-        success "Configuration confirmed"
+    if [[ -n "$CUSTOM_LOGIN_URL" ]]; then
+        echo "Login URL: /$CUSTOM_LOGIN_URL (custom)"
     else
-        error "Configuration cancelled by user"
-        exit 1
+        echo "Login URL: /wp-admin (default)"
     fi
+    
+    # Check for BuddyBoss and display info
+    check_buddyboss_info
+    
+    # Check disk space
+    check_disk_space
+    
+    echo
+    # Calculate default backup directory (one level up from WP_PATH)
+    local parent_dir=$(dirname "$WP_PATH")
+    local default_backup_dir="$parent_dir/wp_backups"
+    
+    read_input "Enter backup directory path [$default_backup_dir]: " "input" "false" "" "true"
+    BACKUP_DIR="${input:-$default_backup_dir}"
+    
+    # Create backup directory if it doesn't exist
+    mkdir -p "$BACKUP_DIR"
+    
+    # Set backup file paths
+    DB_DUMP="$BACKUP_DIR/db_backup_$DATE.sql"
+    WEB_ARCHIVE="$BACKUP_DIR/web_backup_$DATE.tar.gz"
 }
 
 cleanup() {
     echo
     log "Performing cleanup..."
     
-    # Remove rclone config
-    if rclone config show myaws >/dev/null 2>&1; then
-        rclone config delete myaws
-        success "Removed rclone configuration"
+    # Disable maintenance mode if it was enabled AND user requested it
+    if [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]] && [[ "$DISABLE_MAINTENANCE_ON_EXIT" == "true" ]]; then
+        disable_maintenance_mode
+    elif [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]]; then
+        info "Maintenance mode left enabled as requested"
     fi
     
     # Clean up temporary files
     if [[ -n "$TEMP_FILES" ]]; then
-        cd "$WEBROOT/../" && rm -f $TEMP_FILES 2>/dev/null || true
-        success "Removed temporary files: $TEMP_FILES"
-    fi
-    
-    # Remove rclone if it was installed by this script
-    if command -v rclone &> /dev/null; then
-        echo
-        prompt "Remove rclone from system? (Y/N): "
-        read -r remove_rclone
-        if [[ "$remove_rclone" =~ ^[Yy]$ ]]; then
-            yum remove -y rclone
-            success "Removed rclone from system"
-        fi
+        rm -f $TEMP_FILES 2>/dev/null || true
+        success "Removed temporary files"
     fi
     
     log "Cleanup completed"
@@ -407,95 +273,314 @@ check_prerequisites() {
         exit 1
     fi
     
-    if ! command -v yum &> /dev/null; then
-        error "yum package manager not found"
+    if [[ ! -f "$WP_CLI" ]]; then
+        error "WP-CLI not found at $WP_CLI"
         exit 1
     fi
     
-    if [[ ! -f "$WP_CLI" ]]; then
-        error "WP-CLI not found at $WP_CLI"
+    # Check if numfmt exists
+    if ! command -v numfmt &> /dev/null; then
+        error "numfmt command not found (part of coreutils)"
         exit 1
     fi
     
     success "Prerequisites check passed"
 }
 
-install_rclone() {
-    log "Checking rclone installation..."
+check_buddyboss_info() {
+    local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
+    local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
     
-    if command -v rclone &> /dev/null; then
-        success "rclone is already installed"
-    else
-        info "Installing rclone..."
-        yum install -y rclone >/dev/null 2>&1
-        success "rclone installed successfully"
+    if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
+        echo
+        info "=== BuddyBoss Installation Found ==="
+        echo "BuddyBoss App Plugin: $bb_app_installed"
+        echo "BuddyBoss Theme: $bb_theme_installed"
+        
+        if [[ "$bb_app_installed" == "yes" ]]; then
+            BB_APP_ID=$("$WP_CLI" option pluck bbapps bbapp_app_id --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+            BB_APP_KEY=$("$WP_CLI" option pluck bbapps bbapp_app_key --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null || echo "N/A")
+            echo "BuddyBoss App ID: $BB_APP_ID"
+            echo "BuddyBoss App Key: $BB_APP_KEY"
+        fi
     fi
 }
 
-setup_rclone() {
-    log "Setting up rclone configuration..."
+check_buddyboss_installation() {
+    local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
+    local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
     
-    rclone config create myaws s3 \
-        provider AWS \
-        env_auth false \
-        access_key_id "$AWS_ACCESS_KEY" \
-        secret_access_key "$AWS_SECRET_KEY" \
-        region "$AWS_REGION" \
-        location_constraint "$AWS_REGION" >/dev/null 2>&1
+    # Return status for maintenance mode decision
+    if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
+        return 0  # BuddyBoss detected
+    else
+        return 1  # No BuddyBoss
+    fi
+}
+
+enable_maintenance_mode() {
+    echo
     
-    # Test connection
-    info "Testing S3 connection..."
-    if ! rclone lsd myaws:$S3_BUCKET >/dev/null 2>&1; then
-        error "Failed to connect to S3 bucket '$S3_BUCKET'"
-        error "Please check your AWS credentials and bucket name"
-        exit 1
+    # Always check for BuddyBoss components first
+    local bb_app_installed=$("$WP_CLI" plugin list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-app" && echo "yes" || echo "no")
+    local bb_theme_installed=$("$WP_CLI" theme list --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | grep -q "buddyboss-theme" && echo "yes" || echo "no")
+    
+    if [[ "$bb_app_installed" == "yes" ]] || [[ "$bb_theme_installed" == "yes" ]]; then
+        # BuddyBoss detected
+        
+        if [[ "$bb_theme_installed" == "yes" ]]; then
+            prompt "Enable BuddyBoss Theme's maintenance mode? (Y/N) [Default: Y]: "
+            read -r enable_bb_theme
+            enable_bb_theme=${enable_bb_theme:-Y}
+            
+            if [[ "$enable_bb_theme" =~ ^[Yy]$ ]]; then
+                "$WP_CLI" option patch update buddyboss_theme_options maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                local mode=$("$WP_CLI" option pluck buddyboss_theme_options maintenance_mode --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null || echo "0")
+                
+                if [[ "$mode" == "1" ]]; then
+                    success "BuddyBoss Theme maintenance mode enabled"
+                    MAINTENANCE_MODE_ENABLED=true
+                    MAINTENANCE_TYPE="bb_theme"
+                else
+                    warning "Failed to enable BuddyBoss Theme maintenance mode"
+                fi
+            fi
+        fi
+        
+        if [[ "$bb_app_installed" == "yes" ]]; then
+            echo  # Add blank line before App prompt
+            prompt "Enable BuddyBoss App's maintenance mode? (Y/N) [Default: Y]: "
+            read -r enable_bb_app
+            enable_bb_app=${enable_bb_app:-Y}
+            
+            if [[ "$enable_bb_app" =~ ^[Yy]$ ]]; then
+                "$WP_CLI" option patch update bbapp_settings app_maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                local mode=$("$WP_CLI" option pluck bbapp_settings app_maintenance_mode --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null || echo "0")
+                
+                if [[ "$mode" == "1" ]]; then
+                    success "BuddyBoss App maintenance mode enabled"
+                    MAINTENANCE_MODE_ENABLED=true
+                    if [[ "$MAINTENANCE_TYPE" == "bb_theme" ]]; then
+                        MAINTENANCE_TYPE="bb_both"
+                    else
+                        MAINTENANCE_TYPE="bb_app"
+                    fi
+                else
+                    warning "Failed to enable BuddyBoss App maintenance mode"
+                fi
+            fi
+        fi
+    else
+        # Standard WordPress
+        prompt "Set WordPress in maintenance mode? (Y/N) [Default: Y]: "
+        read -r enable_wp_maint
+        enable_wp_maint=${enable_wp_maint:-Y}
+        
+        if [[ "$enable_wp_maint" =~ ^[Yy]$ ]]; then
+            "$WP_CLI" plugin install simple-maintenance --activate --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+            local active=$("$WP_CLI" plugin is-active simple-maintenance --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null && echo "active" || echo "inactive")
+            
+            if [[ "$active" == "active" ]]; then
+                success "WordPress maintenance mode enabled"
+                MAINTENANCE_MODE_ENABLED=true
+                MAINTENANCE_TYPE="wp_simple"
+            else
+                warning "Failed to activate maintenance mode plugin"
+            fi
+        fi
     fi
     
-    success "S3 connection established successfully"
+    # Ask if maintenance mode should be disabled after backup
+    if [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]]; then
+        prompt "Disable maintenance mode after backup completes? (y/N) [Default: N]: "
+        read -r disable_maintenance
+        if [[ "$disable_maintenance" =~ ^[Yy]$ ]]; then
+            DISABLE_MAINTENANCE_ON_EXIT=true
+            info "Maintenance mode will be disabled after backup"
+        else
+            DISABLE_MAINTENANCE_ON_EXIT=false
+            info "Maintenance mode will remain enabled after backup"
+        fi
+    fi
+}
+
+disable_maintenance_mode() {
+    log "Disabling maintenance mode..."
+    
+    case "$MAINTENANCE_TYPE" in
+        bb_theme)
+            "$WP_CLI" option patch update buddyboss_theme_options maintenance_mode 0 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+            success "BuddyBoss Theme maintenance mode disabled"
+            ;;
+        bb_app)
+            "$WP_CLI" option patch update bbapp_settings app_maintenance_mode 0 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+            success "BuddyBoss App maintenance mode disabled"
+            ;;
+        bb_both)
+            "$WP_CLI" option patch update buddyboss_theme_options maintenance_mode 0 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+            "$WP_CLI" option patch update bbapp_settings app_maintenance_mode 0 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+            success "BuddyBoss maintenance modes disabled"
+            ;;
+        wp_simple)
+            "$WP_CLI" plugin deactivate simple-maintenance --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null || true
+            success "WordPress maintenance mode disabled"
+            ;;
+    esac
 }
 
 export_database() {
     log "Exporting database..."
     
-    # Change to WordPress directory
-    cd "$WEBROOT" || {
-        error "Failed to access WordPress directory '$WEBROOT'"
+    cd "$WP_PATH" || {
+        error "Failed to access WordPress directory '$WP_PATH'"
         exit 1
     }
+
+    # Read DB creds from wp-config.php
+    local WP_CONF="wp-config.php"
+    if [[ ! -f "$WP_CONF" ]]; then
+        error "wp-config.php not found in $WP_PATH"
+        exit 1
+    fi
+
+    # Extract defines from wp-config.php
+    extract_wp_define() {
+        local key="$1"
+        grep -E "define\(\s*['\"]${key}['\"]" "$WP_CONF" \
+          | sed -E "s/.*define\(\s*['\"]${key}['\"]\s*,\s*['\"]([^'\"]*)['\"].*/\1/" \
+          | tr -d '\r' | head -n1
+    }
+
+    local DB_NAME DB_USER DB_PASSWORD DB_HOST
+    DB_NAME=$(extract_wp_define "DB_NAME")
+    DB_USER=$(extract_wp_define "DB_USER")
+    DB_PASSWORD=$(extract_wp_define "DB_PASSWORD")
+    DB_HOST=$(extract_wp_define "DB_HOST")
+
+    if [[ -z "$DB_NAME" || -z "$DB_USER" || -z "$DB_HOST" ]]; then
+        error "Failed to read DB credentials from wp-config.php"
+        exit 1
+    fi
+
+    local HOST_OPT="" PORT_OPT="" SOCKET_OPT=""
+    if [[ "$DB_HOST" == /* ]]; then
+        SOCKET_OPT="--socket=$DB_HOST"
+    elif [[ "$DB_HOST" == *":"* ]]; then
+        local host_part="${DB_HOST%%:*}"
+        local rest="${DB_HOST#*:}"
+        if [[ "$rest" =~ ^[0-9]+$ ]]; then
+            HOST_OPT="--host=$host_part"; PORT_OPT="--port=$rest"
+        elif [[ "$rest" == /* ]]; then
+            SOCKET_OPT="--socket=$rest"
+        else
+            HOST_OPT="--host=$DB_HOST"
+        fi
+    else
+        HOST_OPT="--host=$DB_HOST"
+    fi
+
+    local OUT_SQL="$DB_DUMP"
+    local ERR_LOG="$BACKUP_DIR/stg-db-export_$DATE.err"
+    : > "$ERR_LOG"
     
-    # Start database export processing in background
-    "$WP_CLI" db export ../stg-db-export.sql --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>../stg-db-export.err || true &
-    local export_pid=$!
-    local error_file="$WEBROOT/../stg-db-export.err"
-    
-    # Monitor progress
-    while kill -0 $export_pid 2>/dev/null; do
-        if [[ -f "$WEBROOT/../stg-db-export.sql" ]]; then
-            local current_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+    # Add error log to temp files for cleanup
+    TEMP_FILES="$TEMP_FILES $ERR_LOG"
+
+    local GTID_ARG=""
+    mysqldump --help 2>/dev/null | grep -q -- "--set-gtid-purged" && GTID_ARG="--set-gtid-purged=OFF"
+    local COLSTAT_ARG=""
+    mysqldump --help 2>/dev/null | grep -q -- "--column-statistics" && COLSTAT_ARG="--column-statistics=0"
+
+    local BASE_ARGS=(
+        --user="$DB_USER"
+        --default-character-set="${DB_CHARSET:-utf8mb4}"
+        --single-transaction
+        --quick
+        --hex-blob
+        --skip-lock-tables
+        --triggers
+        --routines
+        --events
+        --max-allowed-packet=512M
+        --net-buffer-length=1048576
+        --add-drop-table
+        --skip-comments
+        --no-tablespaces
+    )
+    [[ -n "$HOST_OPT"   ]] && BASE_ARGS+=("$HOST_OPT")
+    [[ -n "$PORT_OPT"   ]] && BASE_ARGS+=("$PORT_OPT")
+    [[ -n "$SOCKET_OPT" ]] && BASE_ARGS+=("$SOCKET_OPT")
+    [[ -n "$GTID_ARG"   ]] && BASE_ARGS+=("$GTID_ARG")
+    [[ -n "$COLSTAT_ARG"]] && BASE_ARGS+=("$COLSTAT_ARG")
+
+    set +e
+    MYSQL_PWD="$DB_PASSWORD" mysqldump "${BASE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
+    local dump_pid=$!
+
+    while kill -0 $dump_pid 2>/dev/null; do
+        if [[ -f "$OUT_SQL" ]]; then
+            local current_size
+            current_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
         sleep 2
     done
-    
-    # Wait for process to complete and check exit status
-    wait $export_pid
+
+    wait $dump_pid
     local exit_status=$?
-    
-    echo # New line after progress
-    
-    # Show any errors from export (but do not exit unless export failed)
-    if [[ -s "$error_file" ]]; then
-        warning "Non-fatal errors during database export (see below):"
-        cat "$error_file"
+    set -e
+    echo 
+
+    # fallback
+    if [[ $exit_status -ne 0 || ! -s "$OUT_SQL" ]]; then
+        warning "Initial dump failed (see $ERR_LOG). Retrying without routines/events…"
+        rm -f "$OUT_SQL"
+
+        local SAFE_ARGS=(
+            --user="$DB_USER"
+            --default-character-set="${DB_CHARSET:-utf8mb4}"
+            --single-transaction
+            --quick
+            --hex-blob
+            --skip-lock-tables
+            --triggers
+            --max-allowed-packet=512M
+            --net-buffer-length=1048576
+            --add-drop-table
+            --skip-comments
+            --no-tablespaces
+        )
+        [[ -n "$HOST_OPT"   ]] && SAFE_ARGS+=("$HOST_OPT")
+        [[ -n "$PORT_OPT"   ]] && SAFE_ARGS+=("$PORT_OPT")
+        [[ -n "$SOCKET_OPT" ]] && SAFE_ARGS+=("$SOCKET_OPT")
+        [[ -n "$COLSTAT_ARG"]] && SAFE_ARGS+=("$COLSTAT_ARG")
+
+        set +e
+        MYSQL_PWD="$DB_PASSWORD" mysqldump "${SAFE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
+        dump_pid=$!
+
+        while kill -0 $dump_pid 2>/dev/null; do
+            if [[ -f "$OUT_SQL" ]]; then
+                local current_size2
+                current_size2=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
+                echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size2)     "
+            fi
+            sleep 2
+        done
+
+        wait $dump_pid
+        exit_status=$?
+        set -e
+        echo
+
+        if [[ $exit_status -ne 0 || ! -s "$OUT_SQL" ]]; then
+            error "Database export failed. See $ERR_LOG"
+            exit 1
+        fi
     fi
-    rm -f "$error_file"
-    
-    if [[ $exit_status -ne 0 ]]; then
-        error "Database export failed"
-        exit 1
-    fi
-    
-    local db_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+
+    local db_size
+    db_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
     success "Database exported successfully ($(numfmt --to=iec $db_size))"
 }
 
@@ -503,42 +588,43 @@ create_archive() {
     log "Creating website archive..."
     
     # Get directory size for progress estimation
-    local webroot_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
+    local webroot_size=$(du -sb "$WP_PATH" 2>/dev/null | cut -f1 || echo "0")
     info "Archiving $(numfmt --to=iec $webroot_size) of data..."
     
-    # Change to parent directory
-    cd "$WEBROOT/../" || {
-        error "Failed to access parent directory of '$WEBROOT'"
-        exit 1
-    }
+    # Make temp files unique to this run
+    local tmp_tar_err="$BACKUP_DIR/wp-backup-${DATE}-tar.err"
+    
+    # Add to temp files list for cleanup
+    TEMP_FILES="$TEMP_FILES $tmp_tar_err"
     
     # Create archive with exclusions in background
-    tar -czf ROOT.tar.gz \
-        --exclude='ROOT/wp-content/ai1wm-backups' \
-        --exclude='ROOT/wp-content/backups' \
-        --exclude='ROOT/wp-content/backups-dup-pro' \
-        --exclude='ROOT/wp-content/updraft' \
-        --exclude='ROOT/wp-content/uploads/backup-*' \
-        --exclude='ROOT/wp-content/uploads/backwpup-*' \
-        --exclude='ROOT/wp-content/cache' \
-        --exclude='ROOT/wp-content/uploads/cache' \
-        --exclude='ROOT/wp-content/w3tc-cache' \
-        --exclude='ROOT/wp-content/wp-rocket-cache' \
-        --exclude='ROOT/wp-content/litespeed' \
-        --exclude='ROOT/wp-content/debug.log' \
-        --exclude='ROOT/wp-content/error_log' \
-        --exclude='ROOT/wp-config-backup.php' \
-        --exclude='ROOT/error_log' \
-        --exclude='ROOT/wp-content/ewww' \
-        --exclude='ROOT/wp-content/smush-webp' \
-        --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null &
+    tar -czf "$WEB_ARCHIVE" \
+        --exclude='wp-content/ai1wm-backups' \
+        --exclude='wp-content/backups' \
+        --exclude='wp-content/backups-dup-pro' \
+        --exclude='wp-content/updraft' \
+        --exclude='wp-content/uploads/backup-*' \
+        --exclude='wp-content/uploads/backwpup-*' \
+        --exclude='wp-content/cache' \
+        --exclude='wp-content/uploads/cache' \
+        --exclude='wp-content/w3tc-cache' \
+        --exclude='wp-content/wp-rocket-cache' \
+        --exclude='wp-content/litespeed' \
+        --exclude='wp-content/debug.log' \
+        --exclude='wp-content/error_log' \
+        --exclude='wp-config-backup.php' \
+        --exclude='error_log' \
+        --exclude='wp-content/ewww' \
+        --exclude='wp-content/smush-webp' \
+        --exclude='wp-content/uploads/wp-file-manager-pro/fm_backup' \
+        --exclude='*.log' \
+        -C "$WP_PATH" . 2>"$tmp_tar_err" || true &
     local tar_pid=$!
     
     # Monitor progress
     while kill -0 $tar_pid 2>/dev/null; do
-        if [[ -f "ROOT.tar.gz" ]]; then
-            local current_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+        if [[ -f "$WEB_ARCHIVE" ]]; then
+            local current_size=$(stat -c%s "$WEB_ARCHIVE" 2>/dev/null || echo "0")
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
         sleep 2
@@ -550,83 +636,145 @@ create_archive() {
     
     echo # New line after progress
     
-    if [[ $exit_status -ne 0 ]]; then
-        error "Failed to create archive"
+    # Show any errors from tar (but do not exit unless tar failed)
+    if [[ -s "$tmp_tar_err" ]]; then
+        warning "Non-fatal errors during archive creation (see below):"
+        cat "$tmp_tar_err"
+    fi
+    
+    if [[ $exit_status -ne 0 ]] || [[ ! -s "$WEB_ARCHIVE" ]]; then
+        error "Archive creation failed"
         exit 1
     fi
     
-    local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
+    local archive_size=$(stat -c%s "$WEB_ARCHIVE" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
 }
 
-upload_to_s3() {
-    log "Uploading backup files to S3..."
+collect_server_configuration() {
+    # Cron jobs and PHP config already collected in collect_configuration
+    # Collect remaining items here
     
-    # Change to directory with backup files
-    cd "$WEBROOT/../" || {
-        error "Failed to access backup directory"
-        exit 1
-    }
+    # Collect cron jobs for litespeed user
+    CRON_JOBS=$(crontab -u "$CRON_USER" -l 2>/dev/null || echo "")
     
-    # Get file sizes for progress tracking
-    local db_size=$(stat -c%s "stg-db-export.sql" 2>/dev/null || echo "0")
-    local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
-    local total_size=$((db_size + archive_size))
+    # Collect custom PHP configuration
+    if [[ -f "$PHP_INI_PATH" ]]; then
+        CUSTOM_PHP_INI=$(cat "$PHP_INI_PATH" 2>/dev/null || echo "")
+    fi
+}
+
+confirm_configuration() {
+    echo
+    info "=== Configuration Summary ==="
+    echo "WordPress Root: $WP_PATH"
+    echo "Site URL: $SITE_URL"
+    echo "Database charset: $DB_CHARSET"
+    echo "Backup Directory: $BACKUP_DIR"
+    echo "Database Dump: $DB_DUMP"
+    echo "Web Archive: $WEB_ARCHIVE"
     
-    info "Upload size: $(numfmt --to=iec $total_size)"
-    info "Destination: s3://$S3_BUCKET/$SITE_URL/"
+    if [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]] && [[ "$DISABLE_MAINTENANCE_ON_EXIT" == "true" ]]; then
+        echo "BuddyBoss maintenance modes disabled: True"
+    elif [[ "$MAINTENANCE_MODE_ENABLED" == "true" ]]; then
+        echo "BuddyBoss maintenance modes disabled: False (will remain enabled)"
+    fi
+    
     echo
     
-    # Upload database file
-    log "Uploading database export..."
-    if ! rclone copy stg-db-export.sql "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
-        error "Failed to upload database export"
+    # Confirm configuration
+    prompt "Is this configuration correct? (Y/N) [Default: Y]: "
+    read -r confirm
+    # Accept empty input (Enter key) or Y/y as confirmation
+    if [[ -z "$confirm" ]] || [[ "$confirm" =~ ^[Yy]$ ]]; then
+        success "Configuration confirmed"
+        echo
+    else
+        error "Configuration cancelled by user"
         exit 1
     fi
-    success "Database uploaded"
+}
+
+export_configuration() {
+    log "Exporting server configuration..."
+    
+    local config_file="$BACKUP_DIR/server_config_$DATE.txt"
+    
+    # Create human-readable configuration file
+    cat > "$config_file" << EOF
+# WordPress Backup Configuration
+# Generated: $(date +'%Y-%m-%d %H:%M:%S')
+# Site URL: $SITE_URL
+
+## Site Information
+SITE_URL=$SITE_URL
+DB_CHARSET=$DB_CHARSET
+CUSTOM_LOGIN_URL=$CUSTOM_LOGIN_URL
+
+## BuddyBoss Configuration
+BB_APP_ID=$BB_APP_ID
+BB_APP_KEY=$BB_APP_KEY
+
+## Cron Jobs
+# To restore: crontab -u $LOGNAME - < cron_jobs_${DATE}.txt
+EOF
+
+    success "Configuration exported to: server_config_$DATE.txt"
+
+    # Export cron jobs if any exist
+    if [[ -n "$CRON_JOBS" ]]; then
+        echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
+        success "Cron jobs exported to: cron_jobs_$DATE.txt"
+    fi
+
+    # Export custom PHP configuration if it exists
+    if [[ -n "$CUSTOM_PHP_INI" ]]; then
+        echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
+        cat >> "$config_file" << EOF
+
+## Custom PHP Configuration
+# Original file: $PHP_INI_PATH
+# To restore: cp custom_php_${DATE}.ini /home/$LOGNAME/web/php/998-rapyd.ini
+# Then restart (as root): lswsctrl condrestart
+EOF
+        success "Custom PHP config exported to: custom_php_$DATE.ini"
+    fi
     
     echo
-    
-    # Upload website archive
-    log "Uploading website archive..."
-    if ! rclone copy ROOT.tar.gz "myaws:$S3_BUCKET/$SITE_URL/" --progress --s3-no-check-bucket; then
-        error "Failed to upload website archive"
-        exit 1
-    fi
-    success "Archive uploaded"
-    
-    # Set temp files for cleanup
-    TEMP_FILES="ROOT.tar.gz stg-db-export.sql"
 }
 
 verify_backup() {
-    log "Verifying backup in S3..."
+    log "Verifying backup files..."
     
-    # List files in S3 to verify
-    local s3_files
-    s3_files=$(rclone ls "myaws:$S3_BUCKET/$SITE_URL" 2>/dev/null || true)
-    
-    if [[ -z "$s3_files" ]]; then
-        error "Failed to verify backup in S3 - no files found"
+    # Check that both files exist and are not empty
+    if [[ ! -f "$DB_DUMP" ]] || [[ ! -s "$DB_DUMP" ]]; then
+        error "Database dump not found or empty"
         exit 1
     fi
     
-    # Check that both required files exist
-    if ! echo "$s3_files" | grep -q "ROOT.tar.gz"; then
-        error "Website archive not found in S3"
+    if [[ ! -f "$WEB_ARCHIVE" ]] || [[ ! -s "$WEB_ARCHIVE" ]]; then
+        error "Website archive not found or empty"
         exit 1
     fi
     
-    if ! echo "$s3_files" | grep -q "stg-db-export.sql"; then
-        error "Database export not found in S3"
-        exit 1
-    fi
+    local db_size=$(stat -c%s "$DB_DUMP" 2>/dev/null || echo "0")
+    local archive_size=$(stat -c%s "$WEB_ARCHIVE" 2>/dev/null || echo "0")
     
     echo
-    info "Backup contents:"
-    echo "$s3_files" | while read -r size file; do
-        echo "  [OK] $file ($(numfmt --to=iec $size))"
-    done
+    info "Backup files created:"
+    echo "  [OK] $(basename "$DB_DUMP") ($(numfmt --to=iec $db_size))"
+    echo "  [OK] $(basename "$WEB_ARCHIVE") ($(numfmt --to=iec $archive_size))"
+    
+    # Check for configuration files
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "  [OK] server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "  [OK] cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "  [OK] custom_php_$DATE.ini"
+    fi
     
     echo
     success "Backup verification completed successfully"
@@ -640,12 +788,57 @@ display_summary() {
     echo
     echo ">> Backup Details:"
     echo "   - WordPress site: $SITE_URL"
-    echo "   - S3 Location: s3://$S3_BUCKET/$SITE_URL/"
-    echo "   - Region: $(get_region_name $AWS_REGION) ($AWS_REGION)"
+    echo "   - Backup location: $BACKUP_DIR"
     echo
-    echo ">> Files Uploaded:"
-    echo "   - ROOT.tar.gz (Website files)"
-    echo "   - stg-db-export.sql (Database - $DB_CHARSET charset)"
+    echo ">> Files Created:"
+    echo "   - Database: $(basename "$DB_DUMP") ($DB_CHARSET charset)"
+    echo "   - Web files: $(basename "$WEB_ARCHIVE")"
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "   - Configuration: server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "   - Cron jobs: cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "   - PHP config: custom_php_$DATE.ini"
+    fi
+    echo
+    
+    # Display important configuration values
+    echo ">> Site Configuration:"
+    if [[ -n "$CUSTOM_LOGIN_URL" ]]; then
+        echo "   - Custom Login URL: /$CUSTOM_LOGIN_URL"
+    else
+        echo "   - Login URL: /wp-admin (default)"
+    fi
+    
+    if [[ -n "$BB_APP_ID" ]] && [[ "$BB_APP_ID" != "N/A" ]]; then
+        echo "   - BuddyBoss App ID: $BB_APP_ID"
+        echo "   - BuddyBoss App Key: $BB_APP_KEY"
+    fi
+    
+    if [[ -n "$CRON_JOBS" ]]; then
+        local cron_count=$(echo "$CRON_JOBS" | grep -v '^#' | grep -v '^ | wc -l)
+        echo "   - Cron jobs: $cron_count job(s) backed up"
+    fi
+    
+    if [[ -n "$CUSTOM_PHP_INI" ]]; then
+        echo "   - Custom PHP config: Yes ($PHP_INI_PATH)"
+    fi
+    echo
+    
+    echo ">> Full Paths:"
+    echo "   - $DB_DUMP"
+    echo "   - $WEB_ARCHIVE"
+    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
+        echo "   - $BACKUP_DIR/server_config_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
+        echo "   - $BACKUP_DIR/cron_jobs_$DATE.txt"
+    fi
+    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
+        echo "   - $BACKUP_DIR/custom_php_$DATE.ini"
+    fi
     echo
     echo "==============================================================="
     echo
@@ -654,17 +847,18 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.1"
+    info "         WordPress Local Backup Tool v1.0"
     echo "==============================================================="
     echo
     
     collect_configuration
+    enable_maintenance_mode
+    confirm_configuration
     check_prerequisites
-    install_rclone
-    setup_rclone
     export_database
     create_archive
-    upload_to_s3
+    collect_server_configuration
+    export_configuration
     verify_backup
     display_summary
 }
