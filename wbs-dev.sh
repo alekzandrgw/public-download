@@ -550,10 +550,10 @@ export_database() {
             --skip-comments
             --no-tablespaces
         )
-        [[ -n "$HOST_OPT"   ]] && SAFE_ARGS+=("$HOST_OPT")
-        [[ -n "$PORT_OPT"   ]] && SAFE_ARGS+=("$PORT_OPT")
-        [[ -n "$SOCKET_OPT" ]] && SAFE_ARGS+=("$SOCKET_OPT")
-        [[ -n "$COLSTAT_ARG"]] && SAFE_ARGS+=("$COLSTAT_ARG")
+        [[ -n "$HOST_OPT"    ]] && SAFE_ARGS+=("$HOST_OPT")
+        [[ -n "$PORT_OPT"    ]] && SAFE_ARGS+=("$PORT_OPT")
+        [[ -n "$SOCKET_OPT"  ]] && SAFE_ARGS+=("$SOCKET_OPT")
+        [[ -n "$COLSTAT_ARG" ]] && SAFE_ARGS+=("$COLSTAT_ARG")
 
         set +e
         MYSQL_PWD="$DB_PASSWORD" mysqldump "${SAFE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
