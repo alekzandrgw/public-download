@@ -431,47 +431,156 @@ disable_maintenance_mode() {
 export_database() {
     log "Exporting database..."
     
-    # Make temp files unique to this run
-    local tmp_db_export="/tmp/wp-backup-${DATE}-db.sql"
-    local tmp_db_err="/tmp/wp-backup-${DATE}-db.err"
+    cd "$WP_PATH" || {
+        error "Failed to access WordPress directory '$WP_PATH'"
+        exit 1
+    }
+
+    # Read DB creds from wp-config.php
+    local WP_CONF="wp-config.php"
+    if [[ ! -f "$WP_CONF" ]]; then
+        error "wp-config.php not found in $WP_PATH"
+        exit 1
+    fi
+
+    # Extract defines from wp-config.php
+    extract_wp_define() {
+        local key="$1"
+        grep -E "define\(\s*['\"]${key}['\"]" "$WP_CONF" \
+          | sed -E "s/.*define\(\s*['\"]${key}['\"]\s*,\s*['\"]([^'\"]*)['\"].*/\1/" \
+          | tr -d '\r' | head -n1
+    }
+
+    local DB_NAME DB_USER DB_PASSWORD DB_HOST
+    DB_NAME=$(extract_wp_define "DB_NAME")
+    DB_USER=$(extract_wp_define "DB_USER")
+    DB_PASSWORD=$(extract_wp_define "DB_PASSWORD")
+    DB_HOST=$(extract_wp_define "DB_HOST")
+
+    if [[ -z "$DB_NAME" || -z "$DB_USER" || -z "$DB_HOST" ]]; then
+        error "Failed to read DB credentials from wp-config.php"
+        exit 1
+    fi
+
+    local HOST_OPT="" PORT_OPT="" SOCKET_OPT=""
+    if [[ "$DB_HOST" == /* ]]; then
+        SOCKET_OPT="--socket=$DB_HOST"
+    elif [[ "$DB_HOST" == *":"* ]]; then
+        local host_part="${DB_HOST%%:*}"
+        local rest="${DB_HOST#*:}"
+        if [[ "$rest" =~ ^[0-9]+$ ]]; then
+            HOST_OPT="--host=$host_part"; PORT_OPT="--port=$rest"
+        elif [[ "$rest" == /* ]]; then
+            SOCKET_OPT="--socket=$rest"
+        else
+            HOST_OPT="--host=$DB_HOST"
+        fi
+    else
+        HOST_OPT="--host=$DB_HOST"
+    fi
+
+    local OUT_SQL="$DB_DUMP"
+    local ERR_LOG="$BACKUP_DIR/stg-db-export_$DATE.err"
+    : > "$ERR_LOG"
     
-    # Add to temp files list for cleanup
-    TEMP_FILES="$tmp_db_export $tmp_db_err"
-    
-    # Start database export processing in background
-    "$WP_CLI" db export "$tmp_db_export" --default-character-set="$DB_CHARSET" --allow-root --skip-plugins --skip-themes --quiet --force 2>"$tmp_db_err" || true &
-    local export_pid=$!
-    
-    # Monitor progress
-    while kill -0 $export_pid 2>/dev/null; do
-        if [[ -f "$tmp_db_export" ]]; then
-            local current_size=$(stat -c%s "$tmp_db_export" 2>/dev/null || echo "0")
+    # Add error log to temp files for cleanup
+    TEMP_FILES="$TEMP_FILES $ERR_LOG"
+
+    local GTID_ARG=""
+    mysqldump --help 2>/dev/null | grep -q -- "--set-gtid-purged" && GTID_ARG="--set-gtid-purged=OFF"
+    local COLSTAT_ARG=""
+    mysqldump --help 2>/dev/null | grep -q -- "--column-statistics" && COLSTAT_ARG="--column-statistics=0"
+
+    local BASE_ARGS=(
+        --user="$DB_USER"
+        --default-character-set="${DB_CHARSET:-utf8mb4}"
+        --single-transaction
+        --quick
+        --hex-blob
+        --skip-lock-tables
+        --triggers
+        --routines
+        --events
+        --max-allowed-packet=512M
+        --net-buffer-length=1048576
+        --add-drop-table
+        --skip-comments
+        --no-tablespaces
+    )
+    [[ -n "$HOST_OPT"   ]] && BASE_ARGS+=("$HOST_OPT")
+    [[ -n "$PORT_OPT"   ]] && BASE_ARGS+=("$PORT_OPT")
+    [[ -n "$SOCKET_OPT" ]] && BASE_ARGS+=("$SOCKET_OPT")
+    [[ -n "$GTID_ARG"   ]] && BASE_ARGS+=("$GTID_ARG")
+    [[ -n "$COLSTAT_ARG" ]] && BASE_ARGS+=("$COLSTAT_ARG")
+
+    set +e
+    MYSQL_PWD="$DB_PASSWORD" mysqldump "${BASE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
+    local dump_pid=$!
+
+    while kill -0 $dump_pid 2>/dev/null; do
+        if [[ -f "$OUT_SQL" ]]; then
+            local current_size
+            current_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
         sleep 2
     done
-    
-    # Wait for process to complete and check exit status
-    wait $export_pid
+
+    wait $dump_pid
     local exit_status=$?
-    
-    echo # New line after progress
-    
-    # Show any errors from export (but do not exit unless export failed)
-    if [[ -s "$tmp_db_err" ]]; then
-        warning "Non-fatal errors during database export (see below):"
-        cat "$tmp_db_err"
+    set -e
+    echo 
+
+    # fallback
+    if [[ $exit_status -ne 0 || ! -s "$OUT_SQL" ]]; then
+        warning "Initial dump failed (see $ERR_LOG). Retrying without routines/events…"
+        rm -f "$OUT_SQL"
+
+        local SAFE_ARGS=(
+            --user="$DB_USER"
+            --default-character-set="${DB_CHARSET:-utf8mb4}"
+            --single-transaction
+            --quick
+            --hex-blob
+            --skip-lock-tables
+            --triggers
+            --max-allowed-packet=512M
+            --net-buffer-length=1048576
+            --add-drop-table
+            --skip-comments
+            --no-tablespaces
+        )
+        [[ -n "$HOST_OPT"    ]] && SAFE_ARGS+=("$HOST_OPT")
+        [[ -n "$PORT_OPT"    ]] && SAFE_ARGS+=("$PORT_OPT")
+        [[ -n "$SOCKET_OPT"  ]] && SAFE_ARGS+=("$SOCKET_OPT")
+        [[ -n "$COLSTAT_ARG" ]] && SAFE_ARGS+=("$COLSTAT_ARG")
+
+        set +e
+        MYSQL_PWD="$DB_PASSWORD" mysqldump "${SAFE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
+        dump_pid=$!
+
+        while kill -0 $dump_pid 2>/dev/null; do
+            if [[ -f "$OUT_SQL" ]]; then
+                local current_size2
+                current_size2=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
+                echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size2)     "
+            fi
+            sleep 2
+        done
+
+        wait $dump_pid
+        exit_status=$?
+        set -e
+        echo
+
+        if [[ $exit_status -ne 0 || ! -s "$OUT_SQL" ]]; then
+            error "Database export failed. See $ERR_LOG"
+            exit 1
+        fi
     fi
-    
-    if [[ $exit_status -ne 0 ]] || [[ ! -s "$tmp_db_export" ]]; then
-        error "Database export failed"
-        exit 1
-    fi
-    
-    # Move to final location
-    mv "$tmp_db_export" "$DB_DUMP"
-    
-    local db_size=$(stat -c%s "$DB_DUMP" 2>/dev/null || echo "0")
+
+    local db_size
+    db_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
     success "Database exported successfully ($(numfmt --to=iec $db_size))"
 }
 
@@ -483,7 +592,7 @@ create_archive() {
     info "Archiving $(numfmt --to=iec $webroot_size) of data..."
     
     # Make temp files unique to this run
-    local tmp_tar_err="/tmp/wp-backup-${DATE}-tar.err"
+    local tmp_tar_err="$BACKUP_DIR/wp-backup-${DATE}-tar.err"
     
     # Add to temp files list for cleanup
     TEMP_FILES="$TEMP_FILES $tmp_tar_err"
