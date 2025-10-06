@@ -511,7 +511,7 @@ export_database() {
     [[ -n "$PORT_OPT"   ]] && BASE_ARGS+=("$PORT_OPT")
     [[ -n "$SOCKET_OPT" ]] && BASE_ARGS+=("$SOCKET_OPT")
     [[ -n "$GTID_ARG"   ]] && BASE_ARGS+=("$GTID_ARG")
-    [[ -n "$COLSTAT_ARG"]] && BASE_ARGS+=("$COLSTAT_ARG")
+    [[ -n "$COLSTAT_ARG" ]] && BASE_ARGS+=("$COLSTAT_ARG")
 
     set +e
     MYSQL_PWD="$DB_PASSWORD" mysqldump "${BASE_ARGS[@]}" "$DB_NAME" > "$OUT_SQL" 2>>"$ERR_LOG" &
