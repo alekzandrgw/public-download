@@ -34,23 +34,33 @@ BB_APP_KEY=""
 TEMP_FILES=""
 WP_CLI="/usr/local/bin/wp"
 MOUNT_POINT="/mnt/v1node"
-BACKUP_SOURCE="$MOUNT_POINT/wp_backups"
+BACKUP_SOURCE="$MOUNT_POINT/web_backups"
+LOG_FILE=""
+SCRIPT_START_TIME=$(date +"%Y%m%d_%H%M%S")
 
 # Logging functions
 log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+    local msg="$1"
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $msg"
+    [[ -n "$LOG_FILE" ]] && echo "[$(date +'%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG_FILE"
 }
 
 error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    local msg="$1"
+    echo -e "${RED}[ERROR]${NC} $msg" >&2
+    [[ -n "$LOG_FILE" ]] && echo "[ERROR] $msg" >> "$LOG_FILE"
 }
 
 warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    local msg="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $msg"
+    [[ -n "$LOG_FILE" ]] && echo "[WARNING] $msg" >> "$LOG_FILE"
 }
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    local msg="$1"
+    echo -e "${BLUE}[INFO]${NC} $msg"
+    [[ -n "$LOG_FILE" ]] && echo "[INFO] $msg" >> "$LOG_FILE"
 }
 
 prompt() {
@@ -58,18 +68,45 @@ prompt() {
 }
 
 success() {
-    echo -e "${GREEN}[OK]${NC} $1"
+    local msg="$1"
+    echo -e "${GREEN}[OK]${NC} $msg"
+    [[ -n "$LOG_FILE" ]] && echo "[OK] $msg" >> "$LOG_FILE"
+}
+
+# Log command execution
+log_command() {
+    local cmd="$1"
+    [[ -n "$LOG_FILE" ]] && echo "[CMD] $cmd" >> "$LOG_FILE"
 }
 
 # Cleanup function
 cleanup() {
     if [[ -n "$TEMP_FILES" ]]; then
         rm -f $TEMP_FILES 2>/dev/null || true
-        log "Cleanup completed"
+    fi
+    
+    if [[ -n "$LOG_FILE" ]] && [[ -f "$LOG_FILE" ]]; then
+        echo
+        info "Complete log saved to: $LOG_FILE"
     fi
 }
 
 trap cleanup EXIT
+
+# Initialize log file
+init_log() {
+    local log_dir="/var/log/wordpress_import"
+    mkdir -p "$log_dir"
+    LOG_FILE="$log_dir/import_${SCRIPT_START_TIME}.log"
+    
+    echo "===========================================================" > "$LOG_FILE"
+    echo "WordPress Import/Restore Tool - Execution Log" >> "$LOG_FILE"
+    echo "Started: $(date +'%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+    echo "===========================================================" >> "$LOG_FILE"
+    echo "" >> "$LOG_FILE"
+    
+    info "Logging to: $LOG_FILE"
+}
 
 # Check prerequisites
 check_prerequisites() {
@@ -102,6 +139,7 @@ select_site() {
     log "Fetching available sites..."
     
     local sites_json
+    log_command "rapyd site list --format=json"
     sites_json=$(rapyd site list --format=json 2>/dev/null)
     
     if [[ -z "$sites_json" ]] || [[ "$sites_json" == "[]" ]]; then
@@ -167,7 +205,6 @@ check_backup_source() {
         error "Mount point $MOUNT_POINT does not exist"
         echo
         warning "REMINDER: Mount the volume from Virtuozzo before proceeding"
-        warning "Example: mount /dev/vdb1 $MOUNT_POINT"
         echo
         exit 1
     fi
@@ -288,6 +325,7 @@ copy_backup_files() {
     mkdir -p "$dest_dir"
     
     info "Syncing from $BACKUP_SOURCE to $dest_dir..."
+    log_command "rsync -avh --progress $BACKUP_SOURCE/ $dest_dir/"
     rsync -avh --progress "$BACKUP_SOURCE/" "$dest_dir/" || {
         error "Failed to copy backup files"
         exit 1
@@ -309,6 +347,7 @@ prepare_webroot() {
     # Backup existing public directory
     if [[ -d "$public_dir" ]]; then
         info "Backing up current public directory..."
+        log_command "mv $public_dir $backup_public"
         mv "$public_dir" "$backup_public" || {
             error "Failed to backup public directory"
             exit 1
@@ -323,6 +362,7 @@ prepare_webroot() {
     log "Extracting web archive..."
     local web_archive="$BACKUP_DIR/web_backup_${DATE_PATTERN}.tar.gz"
     
+    log_command "tar -xzf $web_archive -C $public_dir"
     tar -xzf "$web_archive" -C "$public_dir" || {
         error "Failed to extract web archive"
         exit 1
@@ -374,14 +414,35 @@ update_wp_config() {
     }
     
     # Update database credentials
+    log_command "$WP_CLI config set DB_HOST $DB_HOST --allow-root --skip-plugins --skip-themes --raw"
     "$WP_CLI" config set DB_HOST "$DB_HOST" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set DB_HOST"
+    
+    log_command "$WP_CLI config set DB_NAME $DB_NAME --allow-root --skip-plugins --skip-themes --raw"
     "$WP_CLI" config set DB_NAME "$DB_NAME" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set DB_NAME"
+    
+    log_command "$WP_CLI config set DB_USER $DB_USER --allow-root --skip-plugins --skip-themes --raw"
     "$WP_CLI" config set DB_USER "$DB_USER" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set DB_USER"
+    
+    log_command "$WP_CLI config set DB_PASSWORD [REDACTED] --allow-root --skip-plugins --skip-themes --raw"
     "$WP_CLI" config set DB_PASSWORD "$DB_PASSWORD" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set DB_PASSWORD"
     
     # Set DB_CHARSET from backup
     if [[ -n "$DB_CHARSET" ]]; then
+        log_command "$WP_CLI config set DB_CHARSET $DB_CHARSET --allow-root --skip-plugins --skip-themes --raw"
         "$WP_CLI" config set DB_CHARSET "$DB_CHARSET" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set DB_CHARSET"
+    fi
+    
+    # Update Redis configuration from backup
+    if [[ ${#REDIS_CONFIG[@]} -gt 0 ]]; then
+        log "Restoring Redis configuration from backup..."
+        
+        for key in "${!REDIS_CONFIG[@]}"; do
+            local value="${REDIS_CONFIG[$key]}"
+            log_command "$WP_CLI config set $key $value --allow-root --skip-plugins --skip-themes --raw"
+            "$WP_CLI" config set "$key" "$value" --allow-root --skip-plugins --skip-themes --raw || warning "Failed to set $key"
+        done
+        
+        success "Redis configuration restored"
     fi
     
     success "wp-config.php updated with new credentials"
@@ -393,7 +454,10 @@ flush_caches() {
     
     cd "$SELECTED_WEBROOT" || return 1
     
+    log_command "$WP_CLI cache flush --allow-root --skip-plugins --skip-themes"
     "$WP_CLI" cache flush --allow-root --skip-plugins --skip-themes 2>/dev/null || warning "wp cache flush failed"
+    
+    log_command "keydb-cli -s /var/run/redis/redis.sock flushall"
     keydb-cli -s /var/run/redis/redis.sock flushall 2>/dev/null || warning "Redis flushall failed"
     
     success "Caches flushed"
@@ -405,6 +469,7 @@ disable_redis() {
     
     cd "$SELECTED_WEBROOT" || return 1
     
+    log_command "$WP_CLI config set WP_REDIS_DISABLED true --allow-root --skip-plugins --skip-themes --raw"
     "$WP_CLI" config set WP_REDIS_DISABLED true --allow-root --skip-plugins --skip-themes --raw || warning "Failed to disable Redis"
     
     success "Redis disabled"
@@ -422,6 +487,7 @@ import_database() {
     info "Database size: $(du -h "$db_dump" | cut -f1)"
     
     # Import with error handling
+    log_command "mysql -u$DB_USER -h$DB_HOST $DB_NAME -f < $db_dump"
     MYSQL_PWD="$DB_PASSWORD" mysql -u"$DB_USER" -h"$DB_HOST" "$DB_NAME" -f < "$db_dump" 2>>"$err_log" || {
         error "Database import failed. Check error log: $err_log"
         exit 1
@@ -466,12 +532,16 @@ replace_urls() {
     
     # Perform search-replace
     log "Replacing URLs in database..."
+    log_command "$WP_CLI search-replace https://$source_url_clean https://$target_url --allow-root --skip-plugins --skip-themes"
     "$WP_CLI" search-replace "https://$source_url_clean" "https://$target_url" --allow-root --skip-plugins --skip-themes || warning "Search-replace failed"
+    
+    log_command "$WP_CLI search-replace http://$source_url_clean https://$target_url --allow-root --skip-plugins --skip-themes"
     "$WP_CLI" search-replace "http://$source_url_clean" "https://$target_url" --allow-root --skip-plugins --skip-themes || warning "Search-replace (http) failed"
     
     # Check for Elementor and replace URLs
     if "$WP_CLI" plugin is-installed elementor --allow-root 2>/dev/null; then
         log "Elementor detected, replacing URLs..."
+        log_command "$WP_CLI elementor replace-urls https://$source_url_clean https://$target_url --allow-root --skip-plugins --skip-themes"
         "$WP_CLI" elementor replace-urls "https://$source_url_clean" "https://$target_url" --allow-root --skip-plugins --skip-themes || warning "Elementor replace-urls failed"
     fi
     
@@ -507,10 +577,12 @@ replace_paths() {
     
     # Replace in database
     log "Replacing paths in database..."
+    log_command "$WP_CLI search-replace $old_root $new_root --allow-root --skip-plugins --skip-themes"
     "$WP_CLI" search-replace "$old_root" "$new_root" --allow-root --skip-plugins --skip-themes || warning "Path search-replace in DB failed"
     
     # Replace in files
     log "Replacing paths in configuration files..."
+    log_command "find $SELECTED_WEBROOT -type f \\( -name '*.php' -o -name '*.ini' -o -name '*.conf' -o -name '*.env' -o -name '.htaccess' -o -name 'wp-config.php' \\) -exec sed -i 's|$old_root|$new_root|g' {} +"
     find "$SELECTED_WEBROOT" -type f \( -name "*.php" -o -name "*.ini" -o -name "*.conf" -o -name "*.env" -o -name ".htaccess" -o -name "wp-config.php" \) \
         -exec sed -i "s|$old_root|$new_root|g" {} + 2>/dev/null || warning "Path replacement in files failed"
     
@@ -524,7 +596,20 @@ finalize_wordpress() {
     cd "$SELECTED_WEBROOT" || return 1
     
     # Flush rewrite rules
+    log_command "$WP_CLI rewrite flush --allow-root --skip-plugins --skip-themes"
     "$WP_CLI" rewrite flush --allow-root --skip-plugins --skip-themes || warning "Rewrite flush failed"
+    
+    # Flush Elementor CSS if installed
+    if "$WP_CLI" plugin is-installed elementor --allow-root 2>/dev/null; then
+        log_command "$WP_CLI elementor flush-css --allow-root --skip-plugins --skip-themes"
+        "$WP_CLI" elementor flush-css --allow-root --skip-plugins --skip-themes || warning "Elementor flush-css failed"
+    fi
+    
+    # Final cache flush
+    flush_caches
+    
+    success "WordPress finalized"
+} --skip-themes || warning "Rewrite flush failed"
     
     # Flush Elementor CSS if installed
     if "$WP_CLI" plugin is-installed elementor --allow-root 2>/dev/null; then
@@ -551,6 +636,7 @@ copy_php_config() {
     local php_dir="/home/$SELECTED_USER/web/php"
     mkdir -p "$php_dir"
     
+    log_command "cp $custom_php $php_dir/998-rapyd.ini"
     cp "$custom_php" "$php_dir/998-rapyd.ini" || {
         warning "Failed to copy custom PHP config"
         return 1
@@ -560,6 +646,7 @@ copy_php_config() {
     
     # Restart LSWS
     log "Restarting LSWS..."
+    log_command "lswsctrl condrestart"
     lswsctrl condrestart || warning "LSWS restart failed"
     
     success "LSWS restarted"
@@ -579,6 +666,7 @@ add_domains() {
     
     # Check if www version resolves
     local www_resolves=false
+    log_command "dig +short www.$source_domain"
     if dig +short "www.$source_domain" 2>/dev/null | grep -q '^[0-9]'; then
         www_resolves=true
         info "WWW version of domain resolves"
@@ -593,8 +681,10 @@ add_domains() {
         log "Adding domain: $source_domain"
         
         if [[ "$www_resolves" == "true" ]]; then
+            log_command "rapyd domain add --domain $source_domain --www --slug $SELECTED_SLUG"
             rapyd domain add --domain "$source_domain" --www --slug "$SELECTED_SLUG" || warning "Failed to add domain with www"
         else
+            log_command "rapyd domain add --domain $source_domain --slug $SELECTED_SLUG"
             rapyd domain add --domain "$source_domain" --slug "$SELECTED_SLUG" || warning "Failed to add domain"
         fi
         
@@ -616,6 +706,7 @@ add_domains() {
             domain=$(echo "$domain" | xargs)  # Trim whitespace
             
             # Validate with dig
+            log_command "dig +short $domain"
             if ! dig +short "$domain" 2>/dev/null | grep -q '^[0-9]'; then
                 warning "Domain $domain does not resolve, skipping"
                 continue
@@ -624,9 +715,12 @@ add_domains() {
             log "Adding domain: $domain"
             
             # Check www version
+            log_command "dig +short www.$domain"
             if dig +short "www.$domain" 2>/dev/null | grep -q '^[0-9]'; then
+                log_command "rapyd domain add --domain $domain --www --slug $SELECTED_SLUG"
                 rapyd domain add --domain "$domain" --www --slug "$SELECTED_SLUG" || warning "Failed to add $domain"
             else
+                log_command "rapyd domain add --domain $domain --slug $SELECTED_SLUG"
                 rapyd domain add --domain "$domain" --slug "$SELECTED_SLUG" || warning "Failed to add $domain"
             fi
             
@@ -646,6 +740,7 @@ set_primary_domain() {
     log "Configuring primary domain..."
     
     local domains_json
+    log_command "rapyd domain list --format=json"
     domains_json=$(rapyd domain list --format=json 2>/dev/null)
     
     if [[ -z "$domains_json" ]]; then
@@ -663,6 +758,7 @@ set_primary_domain() {
     fi
     
     log "Setting $SOURCE_URL as primary domain..."
+    log_command "rapyd domain set-primary --domain_id $domain_id"
     rapyd domain set-primary --domain_id "$domain_id" || {
         warning "Failed to set primary domain"
         return 1
@@ -695,6 +791,9 @@ display_final_message() {
     echo "   - Source: $SOURCE_URL"
     echo "   - Webroot: $SELECTED_WEBROOT"
     echo
+    echo ">> Log File:"
+    echo "   - $LOG_FILE"
+    echo
     echo "==============================================================="
     echo
 }
@@ -707,6 +806,7 @@ main() {
     echo "==============================================================="
     echo
     
+    init_log
     check_prerequisites
     select_site
     check_backup_source
@@ -722,6 +822,7 @@ main() {
         exit 0
     fi
     
+    log "Starting import process..."
     copy_backup_files
     prepare_webroot
     extract_old_config
@@ -736,6 +837,8 @@ main() {
     copy_php_config
     add_domains
     set_primary_domain
+    
+    log "Import process completed"
     display_final_message
 }
 
