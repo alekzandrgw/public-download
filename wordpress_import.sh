@@ -34,7 +34,7 @@ BB_APP_KEY=""
 TEMP_FILES=""
 WP_CLI="/usr/local/bin/wp"
 MOUNT_POINT="/mnt/v1node"
-BACKUP_SOURCE="$MOUNT_POINT/web_backups"
+BACKUP_SOURCE="$MOUNT_POINT/wp_backups"
 
 # Logging functions
 log() {
