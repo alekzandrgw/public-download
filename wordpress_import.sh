@@ -351,13 +351,15 @@ extract_old_config() {
           | tr -d '\r' | head -n1
     }
     
-    # Try to extract Redis configuration
-    local redis_vars=("WP_REDIS_HOST" "WP_REDIS_PORT" "WP_REDIS_PASSWORD" "WP_REDIS_DATABASE" "WP_REDIS_PREFIX")
+    # Extract all Redis configuration values
+    declare -gA REDIS_CONFIG
+    local redis_vars=("WP_REDIS_HOST" "WP_REDIS_PORT" "WP_REDIS_PASSWORD" "WP_REDIS_DATABASE" "WP_REDIS_PREFIX" "WP_REDIS_SCHEME" "WP_REDIS_CLIENT" "WP_REDIS_TIMEOUT" "WP_REDIS_READ_TIMEOUT" "WP_REDIS_RETRY_INTERVAL")
     
     for var in "${redis_vars[@]}"; do
         local value=$(extract_define "$var" "$backup_config")
         if [[ -n "$value" ]]; then
-            info "Found $var from backup config"
+            REDIS_CONFIG["$var"]="$value"
+            info "Found $var: $value"
         fi
     done
 }
