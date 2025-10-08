@@ -652,6 +652,7 @@ create_archive() {
     
     local archive_size=$(stat -c%s "$WEB_ARCHIVE" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
+    echo
 }
 
 collect_server_configuration() {
