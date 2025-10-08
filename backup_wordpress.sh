@@ -213,17 +213,28 @@ validate_directory() {
     return 0
 }
 
-check_disk_space() {
-    log "Analyzing disk space requirements..."
+analyze_wordpress_and_disk() {
+    log "Analyzing WordPress installation and disk space..."
+    echo
+    
+    # Get WordPress info
+    cd "$WEBROOT" || exit 1
+    
+    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
+        error "WordPress not installed in '$WEBROOT'"
+        exit 1
+    fi
+    
+    # Get site URL for region detection
+    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
+    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
     
     # Get ROOT directory size
     local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
     
-    # Get database size estimate (current size of database)
-    # Get database size estimate (current size of database)
-    # Get database size estimate (current size of database)
+    # Get database size
     local db_size=0
-    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b --quiet 2>/dev/null | grep -oP '^\d+' || echo "0")
+    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b 2>/dev/null | grep -oP '^\d+' || echo "0")
     
     local total_size=$((root_size + db_size))
     local required_space=$((total_size * 110 / 100))  # Add 10% buffer
@@ -231,11 +242,16 @@ check_disk_space() {
     # Get available space on the partition containing WEBROOT
     local available_space=$(df -B1 "$WEBROOT/../" | awk 'NR==2 {print $4}')
     
-    # Display sizes
+    # Display WordPress information
+    info "=== WordPress Installation Analysis ==="
+    echo "Site URL: $detected_url"
+    echo "Database charset: $detected_charset"
     echo
+    
+    # Display disk space analysis
     info "=== Disk Space Analysis ==="
     echo "WordPress files size: $(numfmt --to=iec $root_size)"
-    echo "Database size (est.): $(numfmt --to=iec $db_size)"
+    echo "Database size: $(numfmt --to=iec $db_size)"
     echo "Total backup size: $(numfmt --to=iec $total_size)"
     echo "Required space (with 10% buffer): $(numfmt --to=iec $required_space)"
     echo "Available disk space: $(numfmt --to=iec $available_space)"
@@ -280,6 +296,14 @@ check_disk_space() {
     else
         success "Sufficient disk space available"
     fi
+    
+    echo
+    success "WordPress installation validated"
+    echo
+    
+    # Store values for later use
+    SITE_URL="$detected_url"
+    DB_CHARSET="$detected_charset"
 }
 
 collect_configuration() {
@@ -287,57 +311,39 @@ collect_configuration() {
     info "=== WordPress S3 Backup Configuration ==="
     echo
     
-    # WordPress Configuration (ask first to get site URL for region detection)
+    # WordPress Configuration
     info "WordPress Configuration:"
     read_input "Enter WordPress root directory path [/var/www/webroot/ROOT]: " "input" "false" "" "true"
     WEBROOT="${input:-/var/www/webroot/ROOT}"
     validate_directory "$WEBROOT" || exit 1
     
-    log "Analyzing WordPress installation..."
+    echo
     
-    # Get WordPress info early for better defaults
-    cd "$WEBROOT" || exit 1
+    # Analyze WordPress and disk space BEFORE asking for AWS credentials
+    analyze_wordpress_and_disk
     
-    if ! "$WP_CLI" core is-installed --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
-        error "WordPress not installed in '$WEBROOT'"
-        exit 1
+    # Allow customization of detected values
+    prompt "Customize destination folder name? Press Enter to accept [Detected: $SITE_URL]: "
+    read custom_url
+    if [[ -n "$custom_url" ]]; then
+        SITE_URL="$custom_url"
     fi
     
-    # Get site URL for region detection
-    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
-    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
-    
-    success "WordPress installation detected"
-    echo
-    
-    # Detect suggested AWS region and bucket based on site URL
-    local suggested_region=$(detect_aws_region "$SITE_URL")
-    local suggested_bucket=$(get_bucket_for_region "$suggested_region")
-    
-    # Display detected values and allow customization
-    info "Detected WordPress Information:"
-    echo "Site URL: $detected_url"
-    echo "Database charset: $detected_charset"
-    echo "Detected AWS Region: $(get_region_name $suggested_region) ($suggested_region)"
-    echo "Suggested S3 Bucket: $suggested_bucket"
-    echo
-    
-    prompt "Customize destination folder name? Press Enter to accept [Detected: $detected_url]: "
-    read custom_url
-    SITE_URL="${custom_url:-$detected_url}"
-    
-    prompt "Customize database charset? Press Enter to accept [Detected: $detected_charset]: "
+    prompt "Customize database charset? Press Enter to accept [Detected: $DB_CHARSET]: "
     read custom_charset
-    DB_CHARSET="${custom_charset:-$detected_charset}"
+    if [[ -n "$custom_charset" ]]; then
+        DB_CHARSET="$custom_charset"
+    fi
     
     echo
     
     # Detect suggested AWS region based on site URL
     local suggested_region=$(detect_aws_region "$SITE_URL")
     
-    # AWS Configuration
+    # AWS Configuration (now that we know backup is feasible)
     info "AWS Configuration:"
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
+    echo
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
     
     # Region and bucket selection with smart default
@@ -424,10 +430,12 @@ install_rclone() {
     
     if command -v rclone &> /dev/null; then
         success "rclone is already installed"
+        echo
     else
         info "Installing rclone..."
         yum install -y rclone >/dev/null 2>&1
         success "rclone installed successfully"
+        echo
     fi
 }
 
@@ -451,6 +459,7 @@ setup_rclone() {
     fi
     
     success "S3 connection established successfully"
+    echo
 }
 
 export_database() {
@@ -487,6 +496,7 @@ export_database() {
         exit 1
     fi
 
+    # Parse DB_HOST for socket or host:port combinations
     local HOST_OPT="" PORT_OPT="" SOCKET_OPT=""
     if [[ "$DB_HOST" == /* ]]; then
         SOCKET_OPT="--socket=$DB_HOST"
@@ -504,10 +514,14 @@ export_database() {
         HOST_OPT="--host=$DB_HOST"
     fi
 
-    local OUT_SQL="../stg-db-export.sql"
-    local ERR_LOG="../stg-db-export.err"
+    local OUT_SQL="$WEBROOT/../stg-db-export.sql"
+    local ERR_LOG="$WEBROOT/../stg-db-export.err"
     : > "$ERR_LOG"
+    
+    # Add error log to temp files for cleanup
+    TEMP_FILES="$TEMP_FILES $ERR_LOG"
 
+    # Check for optional mysqldump features
     local GTID_ARG=""
     mysqldump --help 2>/dev/null | grep -q -- "--set-gtid-purged" && GTID_ARG="--set-gtid-purged=OFF"
     local COLSTAT_ARG=""
@@ -529,10 +543,10 @@ export_database() {
         --skip-comments
         --no-tablespaces
     )
-    [[ -n "$HOST_OPT"    ]] && BASE_ARGS+=("$HOST_OPT")
-    [[ -n "$PORT_OPT"    ]] && BASE_ARGS+=("$PORT_OPT")
-    [[ -n "$SOCKET_OPT"  ]] && BASE_ARGS+=("$SOCKET_OPT")
-    [[ -n "$GTID_ARG"    ]] && BASE_ARGS+=("$GTID_ARG")
+    [[ -n "$HOST_OPT"   ]] && BASE_ARGS+=("$HOST_OPT")
+    [[ -n "$PORT_OPT"   ]] && BASE_ARGS+=("$PORT_OPT")
+    [[ -n "$SOCKET_OPT" ]] && BASE_ARGS+=("$SOCKET_OPT")
+    [[ -n "$GTID_ARG"   ]] && BASE_ARGS+=("$GTID_ARG")
     [[ -n "$COLSTAT_ARG" ]] && BASE_ARGS+=("$COLSTAT_ARG")
 
     set +e
@@ -540,9 +554,9 @@ export_database() {
     local dump_pid=$!
 
     while kill -0 $dump_pid 2>/dev/null; do
-        if [[ -f "$WEBROOT/../stg-db-export.sql" ]]; then
+        if [[ -f "$OUT_SQL" ]]; then
             local current_size
-            current_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+            current_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
             echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size)     "
         fi
         sleep 2
@@ -553,7 +567,7 @@ export_database() {
     set -e
     echo 
 
-    # fallback
+    # Fallback: retry without routines/events if initial dump failed
     if [[ $exit_status -ne 0 || ! -s "$OUT_SQL" ]]; then
         warning "Initial dump failed (see $ERR_LOG). Retrying without routines/events…"
         rm -f "$OUT_SQL"
@@ -582,9 +596,9 @@ export_database() {
         dump_pid=$!
 
         while kill -0 $dump_pid 2>/dev/null; do
-            if [[ -f "$WEBROOT/../stg-db-export.sql" ]]; then
+            if [[ -f "$OUT_SQL" ]]; then
                 local current_size2
-                current_size2=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+                current_size2=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
                 echo -ne "\r${BLUE}[INFO]${NC} Current size: $(numfmt --to=iec $current_size2)     "
             fi
             sleep 2
@@ -602,8 +616,9 @@ export_database() {
     fi
 
     local db_size
-    db_size=$(stat -c%s "$WEBROOT/../stg-db-export.sql" 2>/dev/null || echo "0")
+    db_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
     success "Database exported successfully ($(numfmt --to=iec $db_size))"
+    echo
 }
 
 create_archive() {
@@ -612,6 +627,12 @@ create_archive() {
     # Get directory size for progress estimation
     local webroot_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
     info "Archiving $(numfmt --to=iec $webroot_size) of data..."
+    
+    # Make temp files unique to this run
+    local tmp_tar_err="/tmp/wp-migrate-tar.err"
+    
+    # Add to temp files list for cleanup (if TEMP_FILES variable exists)
+    TEMP_FILES="${TEMP_FILES} $tmp_tar_err"
     
     # Change to parent directory
     cd "$WEBROOT/../" || {
@@ -639,7 +660,8 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
-        ROOT 2>/dev/null &
+        --exclude='*.log' \
+        ROOT 2>"$tmp_tar_err" || true &
     local tar_pid=$!
     
     # Monitor progress
@@ -657,13 +679,20 @@ create_archive() {
     
     echo # New line after progress
     
-    if [[ $exit_status -ne 0 ]]; then
-        error "Failed to create archive"
+    # Show any errors from tar (but do not exit unless tar failed)
+    if [[ -s "$tmp_tar_err" ]]; then
+        warning "Non-fatal errors during archive creation (see below):"
+        cat "$tmp_tar_err"
+    fi
+    
+    if [[ $exit_status -ne 0 ]] || [[ ! -s "ROOT.tar.gz" ]]; then
+        error "Archive creation failed"
         exit 1
     fi
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
+    echo
 }
 
 upload_to_s3() {
@@ -761,15 +790,14 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.1"
+    info "            Staging Site S3 Backup Script"
     echo "==============================================================="
     echo
     
+    check_prerequisites
     collect_configuration
     echo
     
-    check_prerequisites
-    check_disk_space
     install_rclone
     setup_rclone
     export_database
