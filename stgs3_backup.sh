@@ -792,7 +792,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "            Staging Site S3 Backup Script"
+    info "            Staging Site S3 Backup Tool"
     echo "==============================================================="
     echo
     
