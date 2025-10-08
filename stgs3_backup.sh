@@ -261,6 +261,7 @@ analyze_wordpress_and_disk() {
     local ten_gb=$((10 * 1024 * 1024 * 1024))
     if [[ $total_size -gt $ten_gb ]]; then
         warning "*** Large site detected (>10GB)!"
+        echo
         
         if ! is_in_screen; then
             warning "You are NOT running in a screen/tmux session."
@@ -295,6 +296,7 @@ analyze_wordpress_and_disk() {
         warning "Continuing with insufficient space - backup may fail!"
     else
         success "Sufficient disk space available"
+        echo
     fi
     
     echo
