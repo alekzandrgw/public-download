@@ -142,6 +142,7 @@ check_disk_space() {
     if [[ $total_size -gt $ten_gb ]]; then
         echo
         warning "*** Large site detected (>10GB)!"
+        echo
         
         if ! is_in_screen; then
             warning "You are NOT running in a screen/tmux session."
@@ -359,6 +360,7 @@ enable_maintenance_mode() {
                 
                 if [[ "$mode" == "1" ]]; then
                     success "BuddyBoss App maintenance mode enabled"
+                    echo
                     MAINTENANCE_MODE_ENABLED=true
                     if [[ "$MAINTENANCE_TYPE" == "bb_theme" ]]; then
                         MAINTENANCE_TYPE="bb_both"
@@ -582,6 +584,7 @@ export_database() {
     local db_size
     db_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
     success "Database exported successfully ($(numfmt --to=iec $db_size))"
+    echo
 }
 
 create_archive() {
