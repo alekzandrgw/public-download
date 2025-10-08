@@ -470,7 +470,7 @@ export_database() {
     if [[ ! -f "$WP_CONF" ]]; then
         error "wp-config.php not found in $WEBROOT"
         exit 1
-    }
+    fi
 
     # Extract defines from wp-config.php
     extract_wp_define() {
