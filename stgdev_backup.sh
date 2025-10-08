@@ -299,6 +299,7 @@ analyze_wordpress_and_disk() {
     
     echo
     success "WordPress installation validated"
+    echo
     
     # Store values for later use
     SITE_URL="$detected_url"
@@ -342,6 +343,7 @@ collect_configuration() {
     # AWS Configuration (now that we know backup is feasible)
     info "AWS Configuration:"
     read_input "Enter AWS Access Key ID: " "AWS_ACCESS_KEY"
+    echo
     read_input "Enter AWS Secret Access Key: " "AWS_SECRET_KEY" "true"
     
     # Region and bucket selection with smart default
@@ -510,7 +512,7 @@ export_database() {
     fi
 
     local OUT_SQL="$WEBROOT/../stg-db-export.sql"
-    local ERR_LOG="$WEBROOT/../stg-db-export_$DATE.err"
+    local ERR_LOG="$WEBROOT/../stg-db-export.err"
     : > "$ERR_LOG"
     
     # Add error log to temp files for cleanup
