@@ -430,10 +430,12 @@ install_rclone() {
     
     if command -v rclone &> /dev/null; then
         success "rclone is already installed"
+        echo
     else
         info "Installing rclone..."
         yum install -y rclone >/dev/null 2>&1
         success "rclone installed successfully"
+        echo
     fi
 }
 
@@ -457,6 +459,7 @@ setup_rclone() {
     fi
     
     success "S3 connection established successfully"
+    echo
 }
 
 export_database() {
@@ -615,6 +618,7 @@ export_database() {
     local db_size
     db_size=$(stat -c%s "$OUT_SQL" 2>/dev/null || echo "0")
     success "Database exported successfully ($(numfmt --to=iec $db_size))"
+    echo
 }
 
 create_archive() {
@@ -688,6 +692,7 @@ create_archive() {
     
     local archive_size=$(stat -c%s "ROOT.tar.gz" 2>/dev/null || echo "0")
     success "Website archive created successfully ($(numfmt --to=iec $archive_size))"
+    echo
 }
 
 upload_to_s3() {
@@ -785,7 +790,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress S3 Backup Script v2.1"
+    info "            Staging Site S3 Backup Script"
     echo "==============================================================="
     echo
     
