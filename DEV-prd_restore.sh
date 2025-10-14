@@ -4,7 +4,7 @@
 #                V3 Transition - Restore Tool
 #===============================================================
 # Description: Restores WordPress sites from V1 backups to V3
-# Author: Alexander Gil - alekzandrgw
+# Author: Alexander Gil
 # Version: 1.0
 #===============================================================
 
