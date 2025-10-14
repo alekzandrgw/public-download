@@ -235,7 +235,7 @@ collect_configuration() {
     echo
     # Calculate default backup directory (one level up from WP_PATH)
     local parent_dir=$(dirname "$WP_PATH")
-    local default_backup_dir="$parent_dir/wp_backups"
+    local default_backup_dir="$parent_dir/v1_backups"
     
     read_input "Enter backup directory path [$default_backup_dir]: " "input" "false" "" "true"
     BACKUP_DIR="${input:-$default_backup_dir}"
@@ -244,8 +244,8 @@ collect_configuration() {
     mkdir -p "$BACKUP_DIR"
     
     # Set backup file paths
-    DB_DUMP="$BACKUP_DIR/db_backup_$DATE.sql"
-    WEB_ARCHIVE="$BACKUP_DIR/web_backup_$DATE.tar.gz"
+    DB_DUMP="$BACKUP_DIR/db_backup.sql"
+    WEB_ARCHIVE="$BACKUP_DIR/web_backup.tar.gz"
 }
 
 cleanup() {
@@ -321,6 +321,26 @@ check_buddyboss_installation() {
         return 0  # BuddyBoss detected
     else
         return 1  # No BuddyBoss
+    fi
+}
+
+check_multisite() {
+    if "$WP_CLI" config has MULTISITE --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null; then
+        echo "Yes"
+    else
+        echo "No"
+    fi
+}
+
+get_multisite_domains() {
+    # Only get domains if it's a multisite installation
+    if [[ "$(check_multisite)" == "Yes" ]]; then
+        "$WP_CLI" site list --allow-root --skip-plugins --skip-themes --fields=url --format=json --quiet 2>/dev/null \
+            | jq -r '.[].url' \
+            | sed -E 's|https?://||;s|/||g' \
+            | paste -sd,
+    else
+        echo ""
     fi
 }
 
@@ -487,7 +507,7 @@ export_database() {
     fi
 
     local OUT_SQL="$DB_DUMP"
-    local ERR_LOG="$BACKUP_DIR/stg-db-export_$DATE.err"
+    local ERR_LOG="$BACKUP_DIR/log-db-export.err"
     : > "$ERR_LOG"
     
     # Add error log to temp files for cleanup
@@ -600,7 +620,7 @@ create_archive() {
     info "Archiving $(numfmt --to=iec $webroot_size) of data..."
     
     # Make temp files unique to this run
-    local tmp_tar_err="$BACKUP_DIR/wp-backup-${DATE}-tar.err"
+    local tmp_tar_err="$BACKUP_DIR/wp-backup-tar.err"
     
     # Add to temp files list for cleanup
     TEMP_FILES="$TEMP_FILES $tmp_tar_err"
@@ -707,46 +727,38 @@ confirm_configuration() {
 export_configuration() {
     log "Exporting server configuration..."
     
-    local config_file="$BACKUP_DIR/server_config_$DATE.txt"
+    local config_file="$BACKUP_DIR/server_config.txt"
     
     # Create human-readable configuration file
     cat > "$config_file" << EOF
 # WordPress Backup Configuration
 # Generated: $(date +'%Y-%m-%d %H:%M:%S')
-# Site URL: $SITE_URL
-
-## Site Information
-SITE_URL=$SITE_URL
+MULTISITE=$(check_multisite)
+PRIMARY_DOMAIN=$SITE_URL
+SECONDARY_DOMAINS=$(get_multisite_domains)
 DB_CHARSET=$DB_CHARSET
 CUSTOM_LOGIN_URL=$CUSTOM_LOGIN_URL
-
-## BuddyBoss Configuration
+WP_PATH=$WP_PATH
 BB_APP_ID=$BB_APP_ID
 BB_APP_KEY=$BB_APP_KEY
 
-## Cron Jobs
-# To restore: crontab -u $LOGNAME - < cron_jobs_${DATE}.txt
 EOF
 
-    success "Configuration exported to: server_config_$DATE.txt"
+    success "Configuration exported to: server_config.txt"
 
     # Export cron jobs if any exist
     if [[ -n "$CRON_JOBS" ]]; then
-        echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs_$DATE.txt"
-        success "Cron jobs exported to: cron_jobs_$DATE.txt"
+        echo "$CRON_JOBS" > "$BACKUP_DIR/cron_jobs.txt"
+        success "Cron jobs exported to: cron_jobs.txt"
     fi
 
     # Export custom PHP configuration if it exists
     if [[ -n "$CUSTOM_PHP_INI" ]]; then
-        echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php_$DATE.ini"
+        echo "$CUSTOM_PHP_INI" > "$BACKUP_DIR/custom_php.ini"
         cat >> "$config_file" << EOF
 
-## Custom PHP Configuration
-# Original file: $PHP_INI_PATH
-# To restore: cp custom_php_${DATE}.ini /home/$LOGNAME/web/php/998-rapyd.ini
-# Then restart (as root): lswsctrl condrestart
 EOF
-        success "Custom PHP config exported to: custom_php_$DATE.ini"
+        success "Custom PHP config exported to: custom_php.ini"
     fi
     
     echo
@@ -775,14 +787,14 @@ verify_backup() {
     echo "  [OK] $(basename "$WEB_ARCHIVE") ($(numfmt --to=iec $archive_size))"
     
     # Check for configuration files
-    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
-        echo "  [OK] server_config_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/server_config.txt" ]]; then
+        echo "  [OK] server_config.txt"
     fi
-    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
-        echo "  [OK] cron_jobs_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/cron_jobs.txt" ]]; then
+        echo "  [OK] cron_jobs.txt"
     fi
-    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
-        echo "  [OK] custom_php_$DATE.ini"
+    if [[ -f "$BACKUP_DIR/custom_php.ini" ]]; then
+        echo "  [OK] custom_php.ini"
     fi
     
     echo
@@ -802,14 +814,14 @@ display_summary() {
     echo ">> Files Created:"
     echo "   - Database: $(basename "$DB_DUMP") ($DB_CHARSET charset)"
     echo "   - Web files: $(basename "$WEB_ARCHIVE")"
-    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
-        echo "   - Configuration: server_config_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/server_config.txt" ]]; then
+        echo "   - Configuration: server_config.txt"
     fi
-    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
-        echo "   - Cron jobs: cron_jobs_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/cron_jobs.txt" ]]; then
+        echo "   - Cron jobs: cron_jobs.txt"
     fi
-    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
-        echo "   - PHP config: custom_php_$DATE.ini"
+    if [[ -f "$BACKUP_DIR/custom_php.ini" ]]; then
+        echo "   - PHP config: custom_php.ini"
     fi
     echo
     
@@ -839,14 +851,14 @@ display_summary() {
     echo ">> Full Paths:"
     echo "   - $DB_DUMP"
     echo "   - $WEB_ARCHIVE"
-    if [[ -f "$BACKUP_DIR/server_config_$DATE.txt" ]]; then
-        echo "   - $BACKUP_DIR/server_config_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/server_config.txt" ]]; then
+        echo "   - $BACKUP_DIR/server_config.txt"
     fi
-    if [[ -f "$BACKUP_DIR/cron_jobs_$DATE.txt" ]]; then
-        echo "   - $BACKUP_DIR/cron_jobs_$DATE.txt"
+    if [[ -f "$BACKUP_DIR/cron_jobs.txt" ]]; then
+        echo "   - $BACKUP_DIR/cron_jobs.txt"
     fi
-    if [[ -f "$BACKUP_DIR/custom_php_$DATE.ini" ]]; then
-        echo "   - $BACKUP_DIR/custom_php_$DATE.ini"
+    if [[ -f "$BACKUP_DIR/custom_php.ini" ]]; then
+        echo "   - $BACKUP_DIR/custom_php.ini"
     fi
     echo
     echo "==============================================================="
