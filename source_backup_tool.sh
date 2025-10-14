@@ -1,7 +1,12 @@
 #!/bin/bash
 
-# WordPress Local Backup Tool
-# Run as root: ./wordpress_backup.sh
+#===============================================================
+#                V3 Transition - Backup Tool
+#===============================================================
+# Description: Creates WordPress Site Backups from V1
+# Author: Alexander Gil
+# Version: 1.0
+#===============================================================
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
@@ -851,7 +856,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "         WordPress Local Backup Tool v1.0"
+    info "               V3 Transition - Backup Tool"
     echo "==============================================================="
     echo
     
