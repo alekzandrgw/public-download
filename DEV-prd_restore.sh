@@ -123,7 +123,7 @@ update_path_in_files() {
     # Find files containing the old path (with or without trailing slash)
     # Limit depth to 10, exclude common directories
     local files_to_process=$(find "$V3SITEPATH" -maxdepth 10 -type f \
-        \( -name "*.php" -o -name "*.htaccess" -o -name "*.env" -o -name "*.ini" -o -name "*.json" -o -name "*.xml" \) \
+        \( -name "*.php" -o -name "*.htaccess" -o -name "*.env" -o -name "*.ini" -o -name "*.json" -o -name "*.xml" -o -name "*.html" -o -name "*.css" \) \
         ! -path "*/node_modules/*" \
         ! -path "*/vendor/*" \
         ! -path "*/wp-content/uploads/*" \
@@ -174,10 +174,9 @@ update_url_in_files() {
     # Find files containing the old URL
     # Limit depth to 10, exclude common directories
     local files_to_process=$(find "$V3SITEPATH" -maxdepth 10 -type f \
-        \( -name "*.php" -o -name "*.htaccess" -o -name "*.env" -o -name "*.ini" -o -name "*.json" -o -name "*.xml" \) \
+        \( -name "*.php" -o -name "*.htaccess" -o -name "*.env" -o -name "*.ini" -o -name "*.json" -o -name "*.xml" -o -name "*.html" -o -name "*.css"\) \
         ! -path "*/node_modules/*" \
         ! -path "*/vendor/*" \
-        ! -path "*/wp-content/uploads/*" \
         ! -path "*/wp-content/cache/*" \
         -exec grep -l "${V1_PRIMARY_DOMAIN}" {} \; 2>/dev/null)
     
