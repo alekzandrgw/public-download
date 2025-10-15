@@ -291,6 +291,7 @@ check_prerequisites() {
     fi
     
     success "Prerequisites check passed"
+    echo ""
 }
 
 check_buddyboss_info() {
@@ -365,6 +366,7 @@ enable_maintenance_mode() {
                 
                 if [[ "$mode" == "1" ]]; then
                     success "BuddyBoss Theme maintenance mode enabled"
+                    echo ""
                     MAINTENANCE_MODE_ENABLED=true
                     MAINTENANCE_TYPE="bb_theme"
                 else
