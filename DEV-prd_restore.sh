@@ -836,6 +836,33 @@ flush_cache_restore_keydb() {
     print_ok "KeyDB integration restored and cache flushed"
 }
 
+#===============================================================
+# Clear BuddyBoss Platform Previews
+#===============================================================
+
+clear_bb_previews() {
+    local preview_dir="${V3SITEPATH}/wp-content/uploads/bb-platform-previews"
+    
+    # Check if directory exists
+    if [ ! -d "$preview_dir" ]; then
+        print_info "BuddyBoss platform previews directory not found, skipping"
+        return 0
+    fi
+    
+    # Check if directory is empty
+    if [ -z "$(ls -A "$preview_dir" 2>/dev/null)" ]; then
+        print_info "BuddyBoss platform previews directory is empty, skipping"
+        return 0
+    fi
+    
+    print_header ""
+    print_info "Clearing BuddyBoss platform previews..."
+    
+    # Remove all contents but keep the directory
+    rm -rf "${preview_dir:?}"/* 2>&1 | tee -a "$LOGFILE"
+    
+    print_ok "BuddyBoss platform previews cleared successfully"
+}
 
 #===============================================================
 # Restore PHP Settings
@@ -1070,6 +1097,9 @@ main() {
     
     # Flush cache and restore KeyDB
     flush_cache_restore_keydb
+
+	# Clear BuddyBoss platform previews
+	clear_bb_previews
     
     # Restore PHP settings
     restore_php_settings
