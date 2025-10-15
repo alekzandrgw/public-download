@@ -29,6 +29,7 @@ V1_MULTISITE=""
 V1_PRIMARY_DOMAIN=""
 V1_SECONDARY_DOMAINS=""
 V1_WP_PATH=""
+V1_CUSTOM_LOGIN_URL=""
 
 # V3 Variables (parsed from site selection)
 V3SITESLUG=""
@@ -380,6 +381,9 @@ parse_server_config() {
                 ;;
             WP_PATH)
                 V1_WP_PATH="$value"
+                ;;
+			CUSTOM_LOGIN_URL)
+                V1_CUSTOM_LOGIN_URL="$value"
                 ;;
         esac
     done < "$config_file"
@@ -1010,19 +1014,35 @@ assign_domains() {
 }
 
 #===============================================================
-# Cleanup
+# Create Admin User
 #===============================================================
 
-cleanup() {
+create_admin_user() {
     print_header ""
-    print_header "=== Running Cleanup ==="
-    print_header ""
+    print_info "Creating temporary admin user..."
     
-    print_info "Removing temp files..."
-    rm -rf "${V3SITEAPPDIR}/temp"
-    log_output "Temp directory [${V3SITEAPPDIR}/temp] and its content removed"
+    cd "$V3SITEPATH"
     
-    print_ok "Cleanup complete"
+    # Generate random numeric string (12 characters hex)
+    local random_id=$(openssl rand -hex 6 | tr -d '\n')
+    
+    # Generate random password (16 characters, URL-safe)
+    local random_pass=$(openssl rand -base64 12 | tr -d '\n')
+    
+    local admin_user="rapyd_${random_id}"
+    local admin_email="migrations_${random_id}@rapyd.cloud"
+    
+    # Create admin user
+    wp user create "$admin_user" "$admin_email" --role=administrator --user_pass="$random_pass" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    
+    # Store credentials for later use in summary
+    ADMIN_USER="$admin_user"
+    ADMIN_EMAIL="$admin_email"
+    ADMIN_PASS="$random_pass"
+    
+    log_output "Admin user created: ${admin_user} | ${admin_email}"
+    
+    print_ok "Temporary admin user created successfully"
 }
 
 #===============================================================
@@ -1042,6 +1062,14 @@ print_summary() {
     log_output "3. Associate the domain to this site through Rapyd Dashboard"
     log_output "4. Update DNS"
     print_header ""
+	print_header "=== TEMPORARY ADMIN CREDENTIALS ==="
+    log_output "Login URL: https://${V1_PRIMARY_DOMAIN}/${V1_CUSTOM_LOGIN_URL}"
+    log_output "Username: ${ADMIN_USER}"
+    log_output "Email: ${ADMIN_EMAIL}"
+    log_output "Password: ${ADMIN_PASS}"
+    print_header ""
+    log_output "To delete this user after verification, run:"
+    log_output "wp user delete ${ADMIN_USER} --allow-root --yes"
     print_header ""
     print_header "==============================================================="
     print_header ""
@@ -1110,11 +1138,11 @@ main() {
     # Assign domains
     assign_domains
     
-    # Cleanup
-    cleanup
-    
     # Enable mu-plugins
     enable_mu_plugins
+
+	# Create admin user
+	create_admin_user
     
     # Print summary
     print_summary
