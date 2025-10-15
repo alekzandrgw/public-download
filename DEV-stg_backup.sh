@@ -226,15 +226,15 @@ analyze_wordpress_and_disk() {
     fi
     
     # Get site URL for region detection
-    local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | sed 's|https\?://||')
-    local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | tr -d '\n')
+local detected_url=$("$WP_CLI" option get siteurl --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | awk '{print $1}' | sed 's|https\?://||')
+local detected_charset=$("$WP_CLI" eval 'global $wpdb; echo $wpdb->charset . PHP_EOL;' --allow-root --skip-plugins --skip-themes --quiet 2>/dev/null | awk '{print $1}')
     
     # Get ROOT directory size
     local root_size=$(du -sb "$WEBROOT" 2>/dev/null | cut -f1 || echo "0")
     
     # Get database size
     local db_size=0
-    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b 2>/dev/null | grep -oP '^\d+' || echo "0")
+    db_size=$("$WP_CLI" db size --allow-root --skip-plugins --skip-themes --size_format=b 2>/dev/null | awk '{print $1}' || echo "0")
     
     local total_size=$((root_size + db_size))
     local required_space=$((total_size * 110 / 100))  # Add 10% buffer
@@ -792,7 +792,7 @@ display_summary() {
 main() {
     echo
     echo "==============================================================="
-    info "            Staging Site S3 Backup Script"
+    info "            Staging Site S3 Backup Tool"
     echo "==============================================================="
     echo
     
