@@ -23,6 +23,7 @@ BACKUP_SOURCE="${MOUNTPOINT}/v1_backups"
 WPCLIFLAGS="--skip-plugins --skip-themes --quiet --allow-root"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOGFILE="/tmp/v3_restore_${TIMESTAMP}.log"
+KEYDB_AVAILABLE=true
 
 # V1 Variables (parsed from server_config.txt)
 V1_MULTISITE=""
@@ -231,7 +232,22 @@ validate_commands() {
         fi
     done
     
-    if [ ${#missing_commands[@]} -gt 0 ]; then
+    # Check if keydb-cli is the only missing command
+    if [ ${#missing_commands[@]} -eq 1 ] && [ "${missing_commands[0]}" = "keydb-cli" ]; then
+        print_warning "WARNING: KeyDB service not found"
+        print_warning "The current plan may not include object cache"
+        print_warning "If this matches the current plan, allow the script to proceed."
+        echo ""
+        read -p "Do you want to proceed without KeyDB? (yes/no): " proceed
+        if [[ "$proceed" != "yes" && "$proceed" != "y" ]]; then
+            print_error "Script terminated. You can run it again once the service is installed and running."
+            exit 1
+        fi
+        print_ok "Proceeding without KeyDB"
+		KEYDB_AVAILABLE=false
+        echo ""
+    elif [ ${#missing_commands[@]} -gt 0 ]; then
+        # Multiple commands missing or keydb-cli is missing along with others
         print_error "Missing required commands:"
         for cmd in "${missing_commands[@]}"; do
             print_error "  - $cmd"
@@ -610,10 +626,13 @@ temp_disable_cache() {
     wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     log_output "KeyDB integration disabled"
     
-    # Suppress the "OK" in console, but log it
-	keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
-	echo "$keydb_cli_output" >> "$LOGFILE"
-    log_output "KeyDB flushed"
+    if [ "$KEYDB_AVAILABLE" = true ]; then
+        keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
+        echo "$keydb_cli_output" >> "$LOGFILE"
+        log_output "KeyDB flushed"
+    else
+        log_output "KeyDB not available, skipping KeyDB flush"
+    fi
     
     print_ok "KeyDB integration disabled and cache flushed"
 }
@@ -831,10 +850,13 @@ flush_cache_restore_keydb() {
     wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     log_output "KeyDB integration re-enabled"
 
-    # Suppress the "OK" in console, but log it
-    keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
-    echo "$keydb_cli_output" >> "$LOGFILE"
-    log_output "KeyDB flushed"
+    if [ "$KEYDB_AVAILABLE" = true ]; then
+        keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
+        echo "$keydb_cli_output" >> "$LOGFILE"
+        log_output "KeyDB flushed"
+    else
+        log_output "KeyDB not available, skipping KeyDB flush"
+    fi
 
     print_ok "KeyDB integration restored and cache flushed"
 }
