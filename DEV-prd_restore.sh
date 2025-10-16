@@ -237,7 +237,7 @@ validate_commands() {
         print_warning "The current plan may not include object cache"
         print_warning "If this matches the current plan, press Enter to proceed."
         echo ""
-        read -p "Do you want to proceed without KeyDB? (Yes/no) - Default [Yes]: " proceed
+        read -p "Do you want to proceed without KeyDB? (Yes/No) - Default [Yes]: " proceed
         proceed="${proceed:-Yes}"
         if [[ ! "$proceed" =~ ^[Yy][Ee]?$ ]]; then
             print_error "Script terminated. You can run it again once the service is installed and running."
