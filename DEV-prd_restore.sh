@@ -243,14 +243,7 @@ validate_commands() {
             exit 1
         fi
         print_ok "Proceeding without KeyDB"
-        KEYDB_AVAILABLE=false
-        
-        # Delete the object cache file
-        if [ -f "$V3SITEPATH/wp-content/object-cache.php" ]; then
-            rm -f "$V3SITEPATH/wp-content/object-cache.php"
-            print_ok "File object-cache.php was removed to prevent WP-CLI crashes"
-        fi
-        
+		KEYDB_AVAILABLE=false
         echo ""
     elif [ ${#missing_commands[@]} -gt 0 ]; then
         # Multiple commands missing or keydb-cli is missing along with others
@@ -614,6 +607,14 @@ extract_archive() {
     echo ""
     local final_size=$(du -sh "$V3SITEPATH" | awk '{print $1}')
     print_ok "Archive extracted successfully [Size ${final_size}]"
+    
+    # Delete object-cache.php if KeyDB is not available
+    if [ "$KEYDB_AVAILABLE" = false ]; then
+        if [ -f "$V3SITEPATH/wp-content/object-cache.php" ]; then
+            rm -f "$V3SITEPATH/wp-content/object-cache.php"
+            print_ok "Removed object-cache.php to prevent WP-CLI crashes"
+        fi
+    fi
 }
 
 #===============================================================
