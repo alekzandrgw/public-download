@@ -237,14 +237,23 @@ validate_commands() {
         print_warning "The current plan may not include object cache"
         print_warning "If this matches the current plan, press Enter to proceed."
         echo ""
-        read -p "Do you want to proceed without KeyDB? (Yes/No) - Default [Yes]: " proceed
-        proceed="${proceed:-Yes}"
-        if [[ ! "$proceed" =~ ^[Yy][Ee]?$ ]]; then
-            print_error "Script terminated. You can run it again once the service is installed and running."
-            exit 1
-        fi
-        print_ok "Proceeding without KeyDB"
-		KEYDB_AVAILABLE=false
+        while true; do
+            read -p "Do you want to proceed without KeyDB? (Yes/No) [Default Yes]: " proceed
+            proceed=${proceed:-Yes}
+            if [[ "$proceed" =~ ^[YyNn][Ee]?[Ss]?$ ]]; then
+                if [[ "$proceed" =~ ^[Yy] ]]; then
+					echo ""
+                    print_ok "Proceeding without KeyDB"
+                    KEYDB_AVAILABLE=false
+                    break
+                else
+                    print_error "Script terminated. You can run it again once the service is installed and running."
+                    exit 1
+                fi
+            else
+                print_error "Invalid input. Please enter Yes or No"
+            fi
+        done
         echo ""
     elif [ ${#missing_commands[@]} -gt 0 ]; then
         # Multiple commands missing or keydb-cli is missing along with others
@@ -258,6 +267,7 @@ validate_commands() {
     print_ok "All required packages are available"
     echo ""
 }
+
 #===============================================================
 # Prerequisites Check
 #===============================================================
