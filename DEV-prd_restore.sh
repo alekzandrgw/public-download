@@ -211,7 +211,6 @@ update_url_in_files() {
 #===============================================================
 # Pre-flight Validation
 #===============================================================
-
 validate_commands() {
     print_header ""
     print_header "==============================================================="
@@ -244,7 +243,14 @@ validate_commands() {
             exit 1
         fi
         print_ok "Proceeding without KeyDB"
-		KEYDB_AVAILABLE=false
+        KEYDB_AVAILABLE=false
+        
+        # Delete the object cache file
+        if [ -f "$V3SITEPATH/wp-content/object-cache.php" ]; then
+            rm -f "$V3SITEPATH/wp-content/object-cache.php"
+            print_ok "File object-cache.php was removed to prevent WP-CLI crashes"
+        fi
+        
         echo ""
     elif [ ${#missing_commands[@]} -gt 0 ]; then
         # Multiple commands missing or keydb-cli is missing along with others
@@ -258,7 +264,6 @@ validate_commands() {
     print_ok "All required packages are available"
     echo ""
 }
-
 #===============================================================
 # Prerequisites Check
 #===============================================================
