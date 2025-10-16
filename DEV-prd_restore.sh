@@ -235,10 +235,11 @@ validate_commands() {
     if [ ${#missing_commands[@]} -eq 1 ] && [ "${missing_commands[0]}" = "keydb-cli" ]; then
         print_warning "WARNING: KeyDB service not found"
         print_warning "The current plan may not include object cache"
-        print_warning "If this matches the current plan, allow the script to proceed."
+        print_warning "If this matches the current plan, press Enter to proceed."
         echo ""
-        read -p "Do you want to proceed without KeyDB? (yes/no): " proceed
-        if [[ "$proceed" != "yes" && "$proceed" != "y" ]]; then
+        read -p "Do you want to proceed without KeyDB? (Yes/no) - Default [Yes]: " proceed
+        proceed="${proceed:-Yes}"
+        if [[ ! "$proceed" =~ ^[Yy][Ee]?$ ]]; then
             print_error "Script terminated. You can run it again once the service is installed and running."
             exit 1
         fi
