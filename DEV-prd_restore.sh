@@ -1269,12 +1269,12 @@ main() {
     
     # Assign domains
     assign_domains
-    
-    # Enable mu-plugins
-    enable_mu_plugins
 
 	# Create admin user
 	create_admin_user
+	
+    # Enable mu-plugins
+    enable_mu_plugins
     
     # Print summary
     print_summary
