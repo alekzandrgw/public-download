@@ -5,7 +5,7 @@
 #===============================================================
 # Description: Restores WordPress sites from V1 backups to V3
 # Author: Alexander Gil
-# Version: 1.0
+# Version: 5.5
 #===============================================================
 
 set -euo pipefail
@@ -626,6 +626,19 @@ extract_archive() {
             print_ok "Removed object-cache.php to prevent WP-CLI crashes"
         fi
     fi
+    
+    print_header ""
+    print_info "Adjusting file and folder permissions..."
+    
+    # Fix ownership (requires root)
+    chown -R "$V3SITEUSER:$V3SITEUSER" "$V3SITEPATH"
+    log_output "Ownership adjusted to $V3SITEUSER:$V3SITEUSER"
+    
+    # Fix permissions (can run as regular user)
+    su "$V3SITEUSER" -c "find '$V3SITEPATH' -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +"
+    log_output "Directory permissions set to 755, file permissions set to 644"
+    
+    print_ok "File and folder permissions adjusted successfully"
 }
 
 #===============================================================
@@ -702,6 +715,10 @@ import_database() {
 # Update WordPress Constants
 #===============================================================
 
+#===============================================================
+# Update WordPress Constants
+#===============================================================
+
 update_wp_constants() {
     print_header ""
     print_info "Updating WordPress Constants..."
@@ -720,40 +737,55 @@ update_wp_constants() {
     
     print_ok "Database constants updated"
     
-    # Update Redis constants
-    # Check and set WP_REDIS_DISABLED
-    if ! wp config is-true WP_REDIS_DISABLED $WPCLIFLAGS 2>/dev/null; then
-        wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-        log_output "WP_REDIS_DISABLED added/updated"
+    # Handle Redis constants based on KeyDB availability
+    if [ "$KEYDB_AVAILABLE" = true ]; then
+        print_info "Configuring Redis constants..."
+        
+        # Enable Redis
+        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "WP_REDIS_DISABLED set to false"
+        
+        # Extract and update Redis settings from backup
+        V3SITEREDISHOST=$(wp config get WP_REDIS_HOST --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
+        V3SITEREDISSCHEME=$(wp config get WP_REDIS_SCHEME --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
+        V3SITEREDISPORT=$(wp config get WP_REDIS_PORT --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
+        
+        if [ -n "$V3SITEREDISHOST" ]; then
+            wp config set WP_REDIS_HOST "$V3SITEREDISHOST" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_HOST updated"
+        fi
+        
+        if [ -n "$V3SITEREDISSCHEME" ]; then
+            wp config set WP_REDIS_SCHEME "$V3SITEREDISSCHEME" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_SCHEME updated"
+        fi
+        
+        if [ -n "$V3SITEREDISPORT" ]; then
+            wp config set WP_REDIS_PORT "$V3SITEREDISPORT" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_PORT updated"
+        fi
+        
+        print_ok "Redis constants configured"
+    else
+        print_info "Removing all Redis constants (KeyDB unavailable)..."
+        
+        # Get all WP_REDIS_* constants and remove them
+        local redis_constants=$(wp config list WP_REDIS_ --fields=name --format=csv 2>/dev/null | tail -n +2)
+        
+        if [ -n "$redis_constants" ]; then
+            while IFS= read -r constant; do
+                if [ -n "$constant" ]; then
+                    wp config delete "$constant" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+                    log_output "Removed: $constant"
+                fi
+            done <<< "$redis_constants"
+            
+            print_ok "All Redis constants removed"
+        else
+            log_output "No Redis constants found to remove"
+        fi
     fi
     
-    # Remove WP_REDIS_PATH
-    if wp config has WP_REDIS_PATH $WPCLIFLAGS 2>/dev/null; then
-        wp config delete WP_REDIS_PATH $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-        log_output "WP_REDIS_PATH removed"
-    fi
-    
-    # Extract and update Redis settings from backup
-    V3SITEREDISHOST=$(wp config get WP_REDIS_HOST --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
-    V3SITEREDISSCHEME=$(wp config get WP_REDIS_SCHEME --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
-    V3SITEREDISPORT=$(wp config get WP_REDIS_PORT --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
-    
-    if [ -n "$V3SITEREDISHOST" ]; then
-        wp config set WP_REDIS_HOST "$V3SITEREDISHOST" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-        log_output "WP_REDIS_HOST updated"
-    fi
-    
-    if [ -n "$V3SITEREDISSCHEME" ]; then
-        wp config set WP_REDIS_SCHEME "$V3SITEREDISSCHEME" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-        log_output "WP_REDIS_SCHEME updated"
-    fi
-    
-    if [ -n "$V3SITEREDISPORT" ]; then
-        wp config set WP_REDIS_PORT "$V3SITEREDISPORT" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-        log_output "WP_REDIS_PORT updated"
-    fi
-    
-    print_ok "Redis constants updated"
     print_ok "WordPress constants updated successfully"
 }
 
@@ -849,12 +881,42 @@ disable_maintenance_modes() {
 }
 
 #===============================================================
+# Remove Incompatible Cache Plugins
+#===============================================================
+
+remove_incompatible_cache_plugins() {
+    print_header ""
+    print_info "Removing incompatible cache plugins..."
+    
+    local cache_plugins=("redis-cache" "object-cache-pro")
+    local removed_count=0
+    
+    for plugin in "${cache_plugins[@]}"; do
+        if wp plugin is-installed "$plugin" $WPCLIFLAGS 2>/dev/null; then
+            if wp plugin is-active "$plugin" $WPCLIFLAGS 2>/dev/null; then
+                wp plugin deactivate "$plugin" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+                log_output "Plugin deactivated: $plugin"
+            fi
+            
+            wp plugin uninstall "$plugin" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "Plugin removed: $plugin"
+            removed_count=$((removed_count + 1))
+        fi
+    done
+    
+    if [ $removed_count -gt 0 ]; then
+        print_ok "Removed $removed_count incompatible cache plugin(s)"
+    else
+        log_output "No incompatible cache plugins found"
+    fi
+}
+
+#===============================================================
 # Flush Cache and Restore KeyDB Integration
 #===============================================================
 
 flush_cache_restore_keydb() {
     print_header ""
-    print_info "Flushing cache and restoring KeyDB integration..."
     
     cd "$V3SITEPATH" || {
         error "Failed to access site path: $V3SITEPATH"
@@ -864,18 +926,28 @@ flush_cache_restore_keydb() {
     wp cache flush $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     log_output "Object cache flushed"
 
-    wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
-    log_output "KeyDB integration re-enabled"
-
     if [ "$KEYDB_AVAILABLE" = true ]; then
+        print_info "Restoring KeyDB integration..."
+        
+        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "KeyDB integration re-enabled"
+        
         keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
         echo "$keydb_cli_output" >> "$LOGFILE"
         log_output "KeyDB flushed"
+        
+        print_ok "KeyDB integration restored and flushed"
     else
-        log_output "KeyDB not available, skipping KeyDB flush"
+        print_info "KeyDB unavailable - keeping cache disabled and removing incompatible plugins..."
+        
+        wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "KeyDB integration remains disabled"
+        
+        # Remove incompatible cache plugins
+        remove_incompatible_cache_plugins
+        
+        print_ok "Cache configuration finalized for non-KeyDB environment"
     fi
-
-    print_ok "KeyDB integration restored and cache flushed"
 }
 
 #===============================================================
@@ -1087,7 +1159,24 @@ create_admin_user() {
 # Print Summary
 #===============================================================
 
+#===============================================================
+# Print Summary
+#===============================================================
+
+#===============================================================
+# Print Summary
+#===============================================================
+
 print_summary() {
+    # Determine which domain/URL to use in the login URL
+    local login_domain="$V1_PRIMARY_DOMAIN"
+    if [ "$REPLACE_URL" = "Y" ]; then
+        login_domain="$V3SITEURL"
+    fi
+    
+    # Determine login path (without leading slash)
+    local login_path="${V1_CUSTOM_LOGIN_URL:-wp-admin}"
+    
     print_header ""
     print_header "==============================================================="
     print_header "       *** SITE IMPORT COMPLETED SUCCESSFULLY ***"
@@ -1099,9 +1188,14 @@ print_summary() {
     log_output "2. Transfer domains from v1"
     log_output "3. Associate the domain to this site through Rapyd Dashboard"
     log_output "4. Update DNS"
+    log_output "5. Install SSL certificate"
     print_header ""
-	print_header "=== TEMPORARY ADMIN CREDENTIALS ==="
-    log_output "Login URL: https://${V1_PRIMARY_DOMAIN}/${V1_CUSTOM_LOGIN_URL}"
+    log_output "Once DNS changes propagate, install the SSL certificate with:"
+    log_output "rapyd ssl issue --domain ${login_domain}"
+    print_header ""
+    print_header "=== TEMPORARY ADMIN CREDENTIALS ==="
+    
+    log_output "Login URL: https://${login_domain}/${login_path}"
     log_output "Username: ${ADMIN_USER}"
     log_output "Email: ${ADMIN_EMAIL}"
     log_output "Password: ${ADMIN_PASS}"
