@@ -361,7 +361,20 @@ enable_maintenance_mode() {
             enable_bb_theme=${enable_bb_theme:-Y}
             
             if [[ "$enable_bb_theme" =~ ^[Yy]$ ]]; then
-                "$WP_CLI" option patch update buddyboss_theme_options maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                # Check if key exists first
+                set +e
+                "$WP_CLI" option pluck buddyboss_theme_options maintenance_mode --allow-root --skip-themes --skip-plugins --quiet >/dev/null 2>&1
+                local key_exists=$?
+                set -e
+                
+                if [[ $key_exists -eq 0 ]]; then
+                    # Key exists, use update
+                    "$WP_CLI" option patch update buddyboss_theme_options maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                else
+                    # Key doesn't exist, use insert
+                    "$WP_CLI" option patch insert buddyboss_theme_options maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                fi
+                
                 local mode=$("$WP_CLI" option pluck buddyboss_theme_options maintenance_mode --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null || echo "0")
                 
                 if [[ "$mode" == "1" ]]; then
@@ -382,7 +395,20 @@ enable_maintenance_mode() {
             enable_bb_app=${enable_bb_app:-Y}
             
             if [[ "$enable_bb_app" =~ ^[Yy]$ ]]; then
-                "$WP_CLI" option patch update bbapp_settings app_maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                # Check if key exists first
+                set +e
+                "$WP_CLI" option pluck bbapp_settings app_maintenance_mode --allow-root --skip-themes --skip-plugins --quiet >/dev/null 2>&1
+                local key_exists=$?
+                set -e
+                
+                if [[ $key_exists -eq 0 ]]; then
+                    # Key exists, use update
+                    "$WP_CLI" option patch update bbapp_settings app_maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                else
+                    # Key doesn't exist, use insert
+                    "$WP_CLI" option patch insert bbapp_settings app_maintenance_mode 1 --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null
+                fi
+                
                 local mode=$("$WP_CLI" option pluck bbapp_settings app_maintenance_mode --allow-root --skip-themes --skip-plugins --quiet 2>/dev/null || echo "0")
                 
                 if [[ "$mode" == "1" ]]; then
