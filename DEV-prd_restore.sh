@@ -5,7 +5,7 @@
 #===============================================================
 # Description: Restores WordPress sites from V1 backups to V3
 # Author: Alexander Gil
-# Version: 5.5
+# Version: 5.6
 #===============================================================
 
 set -euo pipefail
@@ -23,6 +23,9 @@ BACKUP_SOURCE="${MOUNTPOINT}/v1_backups"
 WPCLIFLAGS="--skip-plugins --skip-themes --quiet --allow-root"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 KEYDB_AVAILABLE=true
+STATE_FILE_PREFIX=".restore_state"
+SCRIPT_DIR="/root"
+CLEANUP_MODE=false
 
 # V1 Variables (parsed from server_config.txt)
 V1_MULTISITE=""
@@ -103,6 +106,189 @@ enable_mu_plugins() {
 }
 
 trap enable_mu_plugins EXIT
+
+#===============================================================
+# State File Management
+#===============================================================
+
+save_state_file() {
+    local state_file="${SCRIPT_DIR}/${STATE_FILE_PREFIX}_${V3SITESLUG}.env"
+    
+    print_header ""
+    print_info "Saving restore state for future cleanup..."
+    
+    cat > "$state_file" << EOF
+# Restore State File
+# Generated: $(date)
+# Site: ${V3SITESLUG}
+
+V3SITESLUG="${V3SITESLUG}"
+V3SITEURL="${V3SITEURL}"
+V3SITEPATH="${V3SITEPATH}"
+V3SITEUSER="${V3SITEUSER}"
+V3SITEBASEDIR="${V3SITEBASEDIR}"
+V3SITEAPPDIR="${V3SITEAPPDIR}"
+ADMIN_USER="${ADMIN_USER}"
+EOF
+    
+    chmod 600 "$state_file"
+    echo "State file created: ${state_file}"
+    print_ok "State saved successfully"
+}
+
+load_state_file() {
+    local state_files=("${SCRIPT_DIR}/${STATE_FILE_PREFIX}"_*.env)
+    
+    # Check if any state files exist
+    if [ ! -e "${state_files[0]}" ]; then
+        print_error "No restore state files found in ${SCRIPT_DIR}"
+        print_error "Cannot perform cleanup without a previous successful restore"
+        exit 1
+    fi
+    
+    # If multiple state files exist, let user choose
+    if [ ${#state_files[@]} -gt 1 ]; then
+        print_header "=== Multiple Restore States Found ==="
+        print_header ""
+        
+        for i in "${!state_files[@]}"; do
+            local slug=$(basename "${state_files[$i]}" | sed "s/${STATE_FILE_PREFIX}_//; s/.env//")
+            echo "[$((i + 1))] ${slug}"
+        done
+        
+        echo ""
+        
+        local selected_index=-1
+        while true; do
+            read -p "Select which site to cleanup (1-${#state_files[@]}): " selection
+            
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#state_files[@]}" ]; then
+                selected_index=$((selection - 1))
+                break
+            else
+                print_error "Invalid selection. Please enter a number between 1 and ${#state_files[@]}"
+            fi
+        done
+        
+        STATE_FILE="${state_files[$selected_index]}"
+    else
+        STATE_FILE="${state_files[0]}"
+    fi
+    
+    print_info "Loading state from: ${STATE_FILE}"
+    
+    # Source the state file
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+    
+    # Validate required variables
+    local required_vars=("V3SITESLUG" "V3SITEURL" "V3SITEPATH" "V3SITEUSER" "V3SITEBASEDIR" "V3SITEAPPDIR" "ADMIN_USER")
+    for var in "${required_vars[@]}"; do
+        if [ -z "${!var:-}" ]; then
+            print_error "Invalid state file: missing $var"
+            exit 1
+        fi
+    done
+    
+    print_ok "State loaded successfully"
+}
+
+#===============================================================
+# Cleanup Artifacts
+#===============================================================
+
+cleanup_artifacts() {
+    print_header ""
+    print_header "==============================================================="
+    print_header "           V3 Transition - Cleanup Artifacts"
+    print_header "==============================================================="
+    print_header ""
+    
+    # Load state file
+    load_state_file
+    
+    print_header "=== Cleanup Summary ==="
+    print_header ""
+    echo "Site: ${V3SITESLUG}"
+    echo "URL: ${V3SITEURL}"
+    echo "Admin user to remove: ${ADMIN_USER}"
+    echo "Backup directory: ${V3SITEAPPDIR}/public-backup"
+    echo "Temp directory: ${V3SITEAPPDIR}/temp"
+    echo "State file: ${STATE_FILE}"
+    print_header ""
+    
+    read -p "Press Enter to proceed with cleanup or Ctrl+C to cancel..."
+    
+    # Remove admin user
+    print_header ""
+    print_info "Removing temporary admin user..."
+    
+    if [ -d "$V3SITEPATH" ]; then
+        cd "$V3SITEPATH"
+        
+        if wp user get "$ADMIN_USER" $WPCLIFLAGS &>/dev/null; then
+            wp user delete "$ADMIN_USER" --yes $WPCLIFLAGS 2>&1
+            print_ok "Admin user '${ADMIN_USER}' removed successfully"
+        else
+            print_warning "Admin user '${ADMIN_USER}' not found (may have been removed already)"
+        fi
+    else
+        print_warning "WordPress path not found, skipping admin user removal"
+    fi
+    
+    # Remove public-backup directory
+    print_header ""
+    print_info "Removing backup directory..."
+    
+    local backup_dir="${V3SITEAPPDIR}/public-backup"
+    if [ -d "$backup_dir" ]; then
+        local backup_size=$(du -sh "$backup_dir" | awk '{print $1}')
+        rm -rf "$backup_dir"
+        print_ok "Backup directory removed [Size: ${backup_size}]"
+    else
+        print_warning "Backup directory not found (may have been removed already)"
+    fi
+    
+    # Remove temp directory
+    print_header ""
+    print_info "Removing temp directory..."
+    
+    local temp_dir="${V3SITEAPPDIR}/temp"
+    if [ -d "$temp_dir" ]; then
+        local temp_size=$(du -sh "$temp_dir" | awk '{print $1}')
+        rm -rf "$temp_dir"
+        print_ok "Temp directory removed [Size: ${temp_size}]"
+    else
+        print_warning "Temp directory not found (may have been removed already)"
+    fi
+    
+    # Remove state file
+    print_header ""
+    print_info "Removing state file..."
+    
+    if [ -f "$STATE_FILE" ]; then
+        rm -f "$STATE_FILE"
+        print_ok "State file removed"
+    fi
+    
+    # Remove script itself
+    print_header ""
+    print_info "Removing restore script..."
+    
+    local script_path="${BASH_SOURCE[0]}"
+    if [ -f "$script_path" ]; then
+        rm -f -- "$script_path"
+        print_ok "Restore script removed"
+    fi
+    
+    print_header ""
+    print_header "==============================================================="
+    print_header "          *** CLEANUP COMPLETED SUCCESSFULLY ***"
+    print_header "==============================================================="
+    print_header ""
+    echo "All restore artifacts have been removed from the system."
+    print_header ""
+}
 
 #===============================================================
 # File-based Path Replacement Helper
@@ -1259,10 +1445,20 @@ main() {
 	
     # Enable mu-plugins
     enable_mu_plugins
-    
+
+	# Save state file for future cleanup
+    save_state_file
+	
     # Print summary
     print_summary
 }
+
+# Parse command line arguments
+if [ "${1:-}" = "--cleanup" ]; then
+    CLEANUP_MODE=true
+    cleanup_artifacts
+    exit 0
+fi
 
 # Run main function
 main
