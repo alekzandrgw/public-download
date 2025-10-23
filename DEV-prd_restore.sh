@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Capture the absolute path of this script
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+
 #===============================================================
 #                V3 Transition - Restore Tool
 #===============================================================
@@ -62,20 +65,23 @@ DISABLE_MAINTENANCE="Y"
 # Helper Functions
 #===============================================================
 
+# Function to return current timestamp
+_now() { date +"%Y-%m-%d %H:%M:%S"; }
+
 print_info() {
-    echo -e "${LBLUE}[INFO] $1${NC}"
+    echo -e "${LBLUE}[$(_now) - INFO] $1${NC}"
 }
 
 print_ok() {
-    echo -e "${GREEN}[OK] $1${NC}"
+    echo -e "${GREEN}[$(_now) - OK] $1${NC}"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING] $1${NC}"
+    echo -e "${YELLOW}[$(_now) - WARNING] $1${NC}"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR] $1${NC}"
+    echo -e "${RED}[$(_now) - ERROR] $1${NC}"
 }
 
 print_header() {
@@ -158,6 +164,7 @@ load_state_file() {
     done
     
     print_ok "State loaded successfully"
+    echo ""
 }
 
 #===============================================================
@@ -165,6 +172,7 @@ load_state_file() {
 #===============================================================
 
 cleanup_artifacts() {
+    
     print_header ""
     print_header "==============================================================="
     print_header "           V3 Transition - Cleanup Artifacts"
@@ -236,17 +244,14 @@ cleanup_artifacts() {
     if [ -f "$STATE_FILE" ]; then
         rm -f "$STATE_FILE"
         print_ok "State file removed"
+        echo ""
     fi
     
-    # Remove script itself
-    print_header ""
-    print_info "Removing restore script..."
-    
-    local script_path="${BASH_SOURCE[0]}"
-    if [ -f "$script_path" ]; then
-        rm -f -- "$script_path"
-        print_ok "Restore script removed"
-    fi
+    # Disable exit on error for self-deletion
+    set +e
+    print_info "Deleting myself =("
+    rm -f -- "$SCRIPT_PATH"
+    print_ok "Goodbye..."
     
     print_header ""
     print_header "==============================================================="
@@ -255,6 +260,8 @@ cleanup_artifacts() {
     print_header ""
     echo "All restore artifacts have been removed from the system."
     print_header ""
+    
+    exit 0
 }
 
 #===============================================================
@@ -1338,8 +1345,8 @@ print_summary() {
     echo "Email: ${ADMIN_EMAIL}"
     echo "Password: ${ADMIN_PASS}"
     print_header ""
-    echo "To delete this user after verification, run:"
-    echo "wp user delete ${ADMIN_USER} --allow-root --yes"
+    echo "Once you verify the site is working as expected. Complete the artifacts cleanup by running:"
+    echo "${SCRIPT_PATH} --cleanup"
     print_header ""
     print_header "==============================================================="
     print_header ""
