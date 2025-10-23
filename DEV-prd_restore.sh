@@ -39,6 +39,9 @@ V3SITEUSER=""
 V3SITEBASEDIR=""
 V3SITEAPPDIR=""
 
+# Cleanup options
+RUN_CLEANUP_AFTER=false
+
 # V3 Database Variables
 V3SITEDBNAME=""
 V3SITEDBUSER=""
@@ -103,6 +106,97 @@ enable_mu_plugins() {
 }
 
 trap enable_mu_plugins EXIT
+
+#===============================================================
+# Cleanup Helper
+#===============================================================
+
+cleanup_artifacts() {
+    print_header ""
+    print_header "=== Cleanup Artifacts ==="
+    print_header ""
+
+    local app_dir="${V3SITEAPPDIR:-}"
+
+    if [ -z "$app_dir" ]; then
+        read -p "Enter the V3 site app directory to clean (e.g., /home/user/site/www/app): " app_dir
+        app_dir="${app_dir%/}"
+    fi
+
+    if [ -z "$app_dir" ]; then
+        print_error "V3 site app directory is required for cleanup."
+        return 1
+    fi
+
+    V3SITEAPPDIR="$app_dir"
+
+    if [ -z "${V3SITEBASEDIR:-}" ]; then
+        V3SITEBASEDIR="${V3SITEAPPDIR%/www/app}"
+    fi
+
+    local cleanup_targets=(
+        "${V3SITEAPPDIR}/public-backup"
+        "${V3SITEAPPDIR}/temp"
+        "${V3SITEAPPDIR}/app/temp"
+    )
+
+    local base_temp=""
+    if [ -n "$V3SITEBASEDIR" ] && [ "$V3SITEBASEDIR" != "$V3SITEAPPDIR" ]; then
+        base_temp="${V3SITEBASEDIR}/app/temp"
+        if [ "$base_temp" != "${V3SITEAPPDIR}/temp" ] && [ "$base_temp" != "${V3SITEAPPDIR}/app/temp" ]; then
+            cleanup_targets+=("$base_temp")
+        fi
+    fi
+
+    local cleanup_success=true
+
+    for target in "${cleanup_targets[@]}"; do
+        target="${target%/}"
+        if [ -z "$target" ]; then
+            continue
+        fi
+
+        if [ -d "$target" ]; then
+            print_info "Removing cleanup directory: $target"
+            if ! rm -rf -- "$target"; then
+                print_error "Failed to remove: $target"
+                cleanup_success=false
+            else
+                print_ok "Removed: $target"
+            fi
+        else
+            print_info "Cleanup target not found, skipping: $target"
+        fi
+    done
+
+    if [ "$cleanup_success" = true ]; then
+        print_info "Cleanup directories processed successfully."
+        print_warning "Script will now remove itself from disk: $0"
+        rm -f -- "$0"
+    else
+        print_error "Cleanup encountered errors; script will not remove itself."
+        return 1
+    fi
+}
+
+#===============================================================
+# Argument Parsing
+#===============================================================
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cleanup)
+                RUN_CLEANUP_AFTER=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+}
 
 #===============================================================
 # File-based Path Replacement Helper
@@ -1264,5 +1358,12 @@ main() {
     print_summary
 }
 
+# Parse arguments and control execution
+parse_arguments "$@"
+
 # Run main function
 main
+
+if [ "$RUN_CLEANUP_AFTER" = true ]; then
+    cleanup_artifacts
+fi
