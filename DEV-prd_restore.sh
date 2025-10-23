@@ -26,6 +26,7 @@ KEYDB_AVAILABLE=true
 STATE_FILE_PREFIX=".restore_state"
 SCRIPT_DIR="/root"
 CLEANUP_MODE=false
+STATE_FILE="/root/restore_state.env"
 
 # V1 Variables (parsed from server_config.txt)
 V1_MULTISITE=""
@@ -112,12 +113,10 @@ trap enable_mu_plugins EXIT
 #===============================================================
 
 save_state_file() {
-    local state_file="${SCRIPT_DIR}/${STATE_FILE_PREFIX}_${V3SITESLUG}.env"
-    
     print_header ""
     print_info "Saving restore state for future cleanup..."
     
-    cat > "$state_file" << EOF
+    cat > "$STATE_FILE" << EOF
 # Restore State File
 # Generated: $(date)
 # Site: ${V3SITESLUG}
@@ -131,48 +130,16 @@ V3SITEAPPDIR="${V3SITEAPPDIR}"
 ADMIN_USER="${ADMIN_USER}"
 EOF
     
-    chmod 600 "$state_file"
-    echo "State file created: ${state_file}"
+    chmod 600 "$STATE_FILE"
+    echo "State file created: ${STATE_FILE}"
     print_ok "State saved successfully"
 }
 
 load_state_file() {
-    local state_files=("${SCRIPT_DIR}/${STATE_FILE_PREFIX}"_*.env)
-    
-    # Check if any state files exist
-    if [ ! -e "${state_files[0]}" ]; then
-        print_error "No restore state files found in ${SCRIPT_DIR}"
+    if [ ! -f "$STATE_FILE" ]; then
+        print_error "No restore state file found: ${STATE_FILE}"
         print_error "Cannot perform cleanup without a previous successful restore"
         exit 1
-    fi
-    
-    # If multiple state files exist, let user choose
-    if [ ${#state_files[@]} -gt 1 ]; then
-        print_header "=== Multiple Restore States Found ==="
-        print_header ""
-        
-        for i in "${!state_files[@]}"; do
-            local slug=$(basename "${state_files[$i]}" | sed "s/${STATE_FILE_PREFIX}_//; s/.env//")
-            echo "[$((i + 1))] ${slug}"
-        done
-        
-        echo ""
-        
-        local selected_index=-1
-        while true; do
-            read -p "Select which site to cleanup (1-${#state_files[@]}): " selection
-            
-            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#state_files[@]}" ]; then
-                selected_index=$((selection - 1))
-                break
-            else
-                print_error "Invalid selection. Please enter a number between 1 and ${#state_files[@]}"
-            fi
-        done
-        
-        STATE_FILE="${state_files[$selected_index]}"
-    else
-        STATE_FILE="${state_files[0]}"
     fi
     
     print_info "Loading state from: ${STATE_FILE}"
