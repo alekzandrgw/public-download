@@ -158,7 +158,7 @@ check_disk_space() {
             if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
                 error "Backup cancelled. Please run this script in a screen session:"
                 error "  screen -S backup"
-                error "  ./wordpress_backup.sh"
+                error "  ./source_backup_tool.sh"
                 exit 1
             fi
         else
