@@ -1,14 +1,11 @@
 #!/bin/bash
 
-# Capture the absolute path of this script
-SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
-
 #===============================================================
 #                V3 Transition - Restore Tool
 #===============================================================
 # Description: Restores WordPress sites from V1 backups to V3
 # Author: Alexander Gil
-# Version: 5.6
+# Version: 5.5
 #===============================================================
 
 set -euo pipefail
@@ -25,11 +22,8 @@ MOUNTPOINT="/mnt/v1node"
 BACKUP_SOURCE="${MOUNTPOINT}/v1_backups"
 WPCLIFLAGS="--skip-plugins --skip-themes --quiet --allow-root"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOGFILE="/tmp/v3_restore_${TIMESTAMP}.log"
 KEYDB_AVAILABLE=true
-STATE_FILE_PREFIX=".restore_state"
-SCRIPT_DIR="/root"
-CLEANUP_MODE=false
-STATE_FILE="/root/restore_state.env"
 
 # V1 Variables (parsed from server_config.txt)
 V1_MULTISITE=""
@@ -65,31 +59,32 @@ DISABLE_MAINTENANCE="Y"
 # Helper Functions
 #===============================================================
 
-# Function to return current timestamp
-_now() { date +"%Y-%m-%d %H:%M:%S"; }
-
 print_info() {
-    echo -e "${LBLUE}[$(_now) - INFO] $1${NC}"
+    echo -e "${LBLUE}[INFO] $1${NC}" | tee -a "$LOGFILE"
 }
 
 print_ok() {
-    echo -e "${GREEN}[$(_now) - OK] $1${NC}"
+    echo -e "${GREEN}[OK] $1${NC}" | tee -a "$LOGFILE"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[$(_now) - WARNING] $1${NC}"
+    echo -e "${YELLOW}[WARNING] $1${NC}" | tee -a "$LOGFILE"
 }
 
 print_error() {
-    echo -e "${RED}[$(_now) - ERROR] $1${NC}"
+    echo -e "${RED}[ERROR] $1${NC}" | tee -a "$LOGFILE"
 }
 
 print_header() {
-    echo -e "${LBLUE}$1${NC}"
+    echo -e "${LBLUE}$1${NC}" | tee -a "$LOGFILE"
 }
 
 is_in_screen() {
     [[ -n "${STY:-}" ]]
+}
+
+log_output() {
+    echo "$1" | tee -a "$LOGFILE"
 }
 
 # --- MU-plugins toggle helpers ---
@@ -115,156 +110,6 @@ enable_mu_plugins() {
 trap enable_mu_plugins EXIT
 
 #===============================================================
-# State File Management
-#===============================================================
-
-save_state_file() {
-    print_header ""
-    print_info "Saving restore state for future cleanup..."
-    
-    cat > "$STATE_FILE" << EOF
-# Restore State File
-# Generated: $(date)
-# Site: ${V3SITESLUG}
-
-V3SITESLUG="${V3SITESLUG}"
-V3SITEURL="${V3SITEURL}"
-V3SITEPATH="${V3SITEPATH}"
-V3SITEUSER="${V3SITEUSER}"
-V3SITEBASEDIR="${V3SITEBASEDIR}"
-V3SITEAPPDIR="${V3SITEAPPDIR}"
-ADMIN_USER="${ADMIN_USER}"
-EOF
-    
-    chmod 600 "$STATE_FILE"
-    echo "State file created: ${STATE_FILE}"
-    print_ok "State saved successfully"
-}
-
-load_state_file() {
-    if [ ! -f "$STATE_FILE" ]; then
-        print_error "No restore state file found: ${STATE_FILE}"
-        print_error "Cannot perform cleanup without a previous successful restore"
-        exit 1
-    fi
-    
-    print_info "Loading state from: ${STATE_FILE}"
-    
-    # Source the state file
-    # shellcheck source=/dev/null
-    source "$STATE_FILE"
-    
-    # Validate required variables
-    local required_vars=("V3SITESLUG" "V3SITEURL" "V3SITEPATH" "V3SITEUSER" "V3SITEBASEDIR" "V3SITEAPPDIR" "ADMIN_USER")
-    for var in "${required_vars[@]}"; do
-        if [ -z "${!var:-}" ]; then
-            print_error "Invalid state file: missing $var"
-            exit 1
-        fi
-    done
-    
-    print_ok "State loaded successfully"
-    echo ""
-}
-
-#===============================================================
-# Cleanup Artifacts
-#===============================================================
-
-cleanup_artifacts() {
-    
-    print_header ""
-    print_header "==============================================================="
-    print_header "           V3 Transition - Cleanup Artifacts"
-    print_header "==============================================================="
-    print_header ""
-    
-    # Load state file
-    load_state_file
-    
-    print_header "=== Cleanup Summary ==="
-    print_header ""
-    echo "Site: ${V3SITESLUG}"
-    echo "URL: ${V3SITEURL}"
-    echo "Admin user to remove: ${ADMIN_USER}"
-    echo "Backup directory: ${V3SITEAPPDIR}/public-backup"
-    echo "Temp directory: ${V3SITEAPPDIR}/temp"
-    echo "State file: ${STATE_FILE}"
-    print_header ""
-    
-    read -p "Press Enter to proceed with cleanup or Ctrl+C to cancel..."
-    
-    # Remove admin user
-    print_header ""
-    print_info "Removing temporary admin user..."
-    
-    if [ -d "$V3SITEPATH" ]; then
-        cd "$V3SITEPATH"
-        
-        if wp user get "$ADMIN_USER" $WPCLIFLAGS &>/dev/null; then
-            wp user delete "$ADMIN_USER" --yes $WPCLIFLAGS 2>&1
-            print_ok "Admin user '${ADMIN_USER}' removed successfully"
-        else
-            print_warning "Admin user '${ADMIN_USER}' not found (may have been removed already)"
-        fi
-    else
-        print_warning "WordPress path not found, skipping admin user removal"
-    fi
-    
-    # Remove public-backup directory
-    print_header ""
-    print_info "Removing backup directory..."
-    
-    local backup_dir="${V3SITEAPPDIR}/public-backup"
-    if [ -d "$backup_dir" ]; then
-        local backup_size=$(du -sh "$backup_dir" | awk '{print $1}')
-        rm -rf "$backup_dir"
-        print_ok "Backup directory removed [Size: ${backup_size}]"
-    else
-        print_warning "Backup directory not found (may have been removed already)"
-    fi
-    
-    # Remove temp directory
-    print_header ""
-    print_info "Removing temp directory..."
-    
-    local temp_dir="${V3SITEAPPDIR}/temp"
-    if [ -d "$temp_dir" ]; then
-        local temp_size=$(du -sh "$temp_dir" | awk '{print $1}')
-        rm -rf "$temp_dir"
-        print_ok "Temp directory removed [Size: ${temp_size}]"
-    else
-        print_warning "Temp directory not found (may have been removed already)"
-    fi
-    
-    # Remove state file
-    print_header ""
-    print_info "Removing state file..."
-    
-    if [ -f "$STATE_FILE" ]; then
-        rm -f "$STATE_FILE"
-        print_ok "State file removed"
-        echo ""
-    fi
-    
-    # Disable exit on error for self-deletion
-    set +e
-    print_info "Deleting myself =("
-    rm -f -- "$SCRIPT_PATH"
-    print_ok "Goodbye..."
-    
-    print_header ""
-    print_header "==============================================================="
-    print_header "          *** CLEANUP COMPLETED SUCCESSFULLY ***"
-    print_header "==============================================================="
-    print_header ""
-    echo "All restore artifacts have been removed from the system."
-    print_header ""
-    
-    exit 0
-}
-
-#===============================================================
 # File-based Path Replacement Helper
 #===============================================================
 update_path_in_files() {
@@ -287,7 +132,7 @@ update_path_in_files() {
         -exec grep -l -E "${V1_WP_PATH}(/|[^/])" {} \; 2>/dev/null)
     
     if [ -z "$files_to_process" ]; then
-        echo "No files found containing old path"
+        log_output "No files found containing old path"
         return 0
     fi
     
@@ -308,11 +153,11 @@ update_path_in_files() {
             sed -i "s|${old_path_escaped}|${new_path_escaped}|g" "$file"
             
             files_modified=$((files_modified + 1))
-            echo "Updated path in: $file"
+            log_output "Updated path in: $file"
         fi
     done <<< "$files_to_process"
     
-    echo "Modified $files_modified file(s) with new path"
+    log_output "Modified $files_modified file(s) with new path"
 }
 
 #===============================================================
@@ -337,7 +182,7 @@ update_url_in_files() {
         -exec grep -l "${V1_PRIMARY_DOMAIN}" {} \; 2>/dev/null)
     
     if [ -z "$files_to_process" ]; then
-        echo "No files found containing old URL"
+        log_output "No files found containing old URL"
         return 0
     fi
     
@@ -356,11 +201,11 @@ update_url_in_files() {
             sed -i "s|${old_domain_escaped}|${new_domain_escaped}|g" "$file"
             
             files_modified=$((files_modified + 1))
-            echo "Updated URL in: $file"
+            log_output "Updated URL in: $file"
         fi
     done <<< "$files_to_process"
     
-    echo "Modified $files_modified file(s) with new URL"
+    log_output "Modified $files_modified file(s) with new URL"
 }
 
 #===============================================================
@@ -447,7 +292,7 @@ check_prerequisites() {
         exit 1
     fi
     
-    echo "Found backup directory ${BACKUP_SOURCE}"
+    log_output "Found backup directory ${BACKUP_SOURCE}"
     
     # Check required files
     local required_files=("db_backup.sql" "web_backup.tar.gz" "server_config.txt" "cron_jobs.txt" "custom_php.ini")
@@ -456,7 +301,7 @@ check_prerequisites() {
             print_error "Required file not found: ${file}"
             exit 1
         fi
-        echo "Found ${file}"
+        log_output "Found ${file}"
     done
     
     echo ""
@@ -494,11 +339,11 @@ analyze_disk_space() {
     local required_size=$(numfmt --to=iec-i --suffix=B $required_bytes 2>/dev/null || echo "$((required_bytes / 1024 / 1024))M")
     local available_size=$(numfmt --to=iec-i --suffix=B $available_bytes_actual 2>/dev/null || echo "$((available_bytes_actual / 1024 / 1024))M")
     
-    echo "WordPress files archive size: ${web_size}"
-    echo "Database archive size: ${db_size}"
-    echo "Total archives size: ${total_size}"
-    echo "Required space (with 20% buffer): ${required_size}"
-    echo "Available disk space: ${available_size}"
+    log_output "WordPress files archive size: ${web_size}"
+    log_output "Database archive size: ${db_size}"
+    log_output "Total archives size: ${total_size}"
+    log_output "Required space (with 20% buffer): ${required_size}"
+    log_output "Available disk space: ${available_size}"
     
     print_header ""
     
@@ -626,7 +471,15 @@ import_preparation() {
     
     # Remove trailing slash from V3SITEPATH
     V3SITEPATH="${V3SITEPATH%/}"
-	
+    
+    # Move log file to proper location if temp directory will be created
+    local new_logfile="${V3SITEAPPDIR}/restore_${TIMESTAMP}.log"
+    if [ -f "$LOGFILE" ] && [ "$LOGFILE" != "$new_logfile" ]; then
+        mkdir -p "${V3SITEAPPDIR}" 2>/dev/null || true
+        cp "$LOGFILE" "$new_logfile" 2>/dev/null || true
+        LOGFILE="$new_logfile"
+    fi
+    
     echo ""
     
     # Parse server config before asking questions
@@ -664,23 +517,23 @@ import_preparation() {
     # Display restore operation summary
     print_header "=== Restore Operation Summary ==="
     print_header ""
-    echo "Backup source: ${BACKUP_SOURCE}"
-    echo "Multisite detected: ${V1_MULTISITE}"
-    echo "Primary domain: ${V1_PRIMARY_DOMAIN}"
+    log_output "Backup source: ${BACKUP_SOURCE}"
+    log_output "Multisite detected: ${V1_MULTISITE}"
+    log_output "Primary domain: ${V1_PRIMARY_DOMAIN}"
     
     if [ -n "$V1_SECONDARY_DOMAINS" ]; then
-        echo "Secondary domain(s): ${V1_SECONDARY_DOMAINS}"
+        log_output "Secondary domain(s): ${V1_SECONDARY_DOMAINS}"
     fi
     
-    echo "Restore target: ${V3SITEURL}"
+    log_output "Restore target: ${V3SITEURL}"
     
     if [[ "$V1_PRIMARY_DOMAIN" == *"rapydapps.cloud"* ]]; then
-        echo "Replace URL: ${REPLACE_URL}"
+        log_output "Replace URL: ${REPLACE_URL}"
     fi
     
-    echo "Disable maintenance mode(s): ${DISABLE_MAINTENANCE}"
-    echo "Old WordPress path: ${V1_WP_PATH}"
-    echo "New WordPress path: ${V3SITEPATH}"
+    log_output "Disable maintenance mode(s): ${DISABLE_MAINTENANCE}"
+    log_output "Old WordPress path: ${V1_WP_PATH}"
+    log_output "New WordPress path: ${V3SITEPATH}"
     
     print_header ""
     
@@ -705,8 +558,8 @@ backup_current_site() {
     
     # Export database
     cd "$V3SITEPATH"
-    wp db export $WPCLIFLAGS 2>&1
-    echo "Default database exported successfully"
+    wp db export $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "Default database exported successfully"
     
     # Rename current directory
     mv "${V3SITEAPPDIR}/public" "${V3SITEAPPDIR}/public-backup"
@@ -734,7 +587,7 @@ download_backup() {
     
     print_header ""
     print_info "Downloading backup files..."
-    su "$V3SITEUSER" -c "rsync -aP ${BACKUP_SOURCE}/ ${V3SITEAPPDIR}/temp/" 2>&1
+    su "$V3SITEUSER" -c "rsync -aP ${BACKUP_SOURCE}/ ${V3SITEAPPDIR}/temp/" 2>&1 | tee -a "$LOGFILE"
     print_ok "Backup files successfully downloaded"
 }
 
@@ -779,11 +632,11 @@ extract_archive() {
     
     # Fix ownership (requires root)
     chown -R "$V3SITEUSER:$V3SITEUSER" "$V3SITEPATH"
-    echo "Ownership adjusted to $V3SITEUSER:$V3SITEUSER"
+    log_output "Ownership adjusted to $V3SITEUSER:$V3SITEUSER"
     
     # Fix permissions (can run as regular user)
     su "$V3SITEUSER" -c "find '$V3SITEPATH' -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +"
-    echo "Directory permissions set to 755, file permissions set to 644"
+    log_output "Directory permissions set to 755, file permissions set to 644"
     
     print_ok "File and folder permissions adjusted successfully"
 }
@@ -797,17 +650,18 @@ temp_disable_cache() {
     print_info "Temporarily disabling KeyDB integration with WordPress"
     
     cd "${V3SITEAPPDIR}/public-backup"
-    wp cache flush $WPCLIFLAGS 2>&1
-    echo "Object cache flushed"
+    wp cache flush $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "Object cache flushed"
     
-    wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1
-    echo "KeyDB integration disabled"
+    wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "KeyDB integration disabled"
     
     if [ "$KEYDB_AVAILABLE" = true ]; then
         keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
-        echo "KeyDB flushed"
+        echo "$keydb_cli_output" >> "$LOGFILE"
+        log_output "KeyDB flushed"
     else
-        echo "KeyDB not available, skipping KeyDB flush"
+        log_output "KeyDB not available, skipping KeyDB flush"
     fi
     
     print_ok "KeyDB integration disabled and cache flushed"
@@ -822,7 +676,7 @@ drop_default_db() {
     print_info "Dropping current database.."
     
     cd "${V3SITEAPPDIR}/public-backup"
-    wp db reset --yes $WPCLIFLAGS 2>&1
+    wp db reset --yes $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     
     print_ok "Database dropped successfully"
 }
@@ -850,7 +704,7 @@ import_database() {
         print_info "Non-fatal errors during database import (see below):"
         # Show unique error lines, truncated to 100 chars
         sort -u "$error_log" | while read -r line; do
-            echo "${line:0:100}..."
+            echo "${line:0:100}..." | tee -a "$LOGFILE"
         done
     fi
     
@@ -872,14 +726,14 @@ update_wp_constants() {
     cd "$V3SITEPATH"
     
     # Update database constants
-    wp config set DB_NAME "$V3SITEDBNAME" $WPCLIFLAGS 2>&1
-    echo "DB_NAME updated"
+    wp config set DB_NAME "$V3SITEDBNAME" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "DB_NAME updated"
     
-    wp config set DB_USER "$V3SITEDBUSER" $WPCLIFLAGS 2>&1
-    echo "DB_USER updated"
+    wp config set DB_USER "$V3SITEDBUSER" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "DB_USER updated"
     
-    wp config set DB_PASSWORD "$V3SITEDBPASS" $WPCLIFLAGS 2>&1
-    echo "DB_PASSWORD updated"
+    wp config set DB_PASSWORD "$V3SITEDBPASS" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "DB_PASSWORD updated"
     
     print_ok "Database constants updated"
     
@@ -888,8 +742,8 @@ update_wp_constants() {
         print_info "Configuring Redis constants..."
         
         # Enable Redis
-        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1
-        echo "WP_REDIS_DISABLED set to false"
+        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "WP_REDIS_DISABLED set to false"
         
         # Extract and update Redis settings from backup
         V3SITEREDISHOST=$(wp config get WP_REDIS_HOST --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
@@ -897,18 +751,18 @@ update_wp_constants() {
         V3SITEREDISPORT=$(wp config get WP_REDIS_PORT --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
         
         if [ -n "$V3SITEREDISHOST" ]; then
-            wp config set WP_REDIS_HOST "$V3SITEREDISHOST" $WPCLIFLAGS 2>&1
-            echo "WP_REDIS_HOST updated"
+            wp config set WP_REDIS_HOST "$V3SITEREDISHOST" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_HOST updated"
         fi
         
         if [ -n "$V3SITEREDISSCHEME" ]; then
-            wp config set WP_REDIS_SCHEME "$V3SITEREDISSCHEME" $WPCLIFLAGS 2>&1
-            echo "WP_REDIS_SCHEME updated"
+            wp config set WP_REDIS_SCHEME "$V3SITEREDISSCHEME" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_SCHEME updated"
         fi
         
         if [ -n "$V3SITEREDISPORT" ]; then
-            wp config set WP_REDIS_PORT "$V3SITEREDISPORT" $WPCLIFLAGS 2>&1
-            echo "WP_REDIS_PORT updated"
+            wp config set WP_REDIS_PORT "$V3SITEREDISPORT" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "WP_REDIS_PORT updated"
         fi
         
         print_ok "Redis constants configured"
@@ -921,14 +775,14 @@ update_wp_constants() {
         if [ -n "$redis_constants" ]; then
             while IFS= read -r constant; do
                 if [ -n "$constant" ]; then
-                    wp config delete "$constant" $WPCLIFLAGS 2>&1
-                    echo "Removed: $constant"
+                    wp config delete "$constant" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+                    log_output "Removed: $constant"
                 fi
             done <<< "$redis_constants"
             
             print_ok "All Redis constants removed"
         else
-            echo "No Redis constants found to remove"
+            log_output "No Redis constants found to remove"
         fi
     fi
     
@@ -950,7 +804,7 @@ update_wp_path() {
     
     # Database update
     disable_mu_plugins
-    WP_CLI_DISABLE_MU_PLUGINS=1 wp search-replace "$V1_WP_PATH" "$V3SITEPATH" $WPCLIFLAGS --all-tables 2>&1
+    WP_CLI_DISABLE_MU_PLUGINS=1 wp search-replace "$V1_WP_PATH" "$V3SITEPATH" $WPCLIFLAGS --all-tables 2>&1 | tee -a "$LOGFILE"
     
     print_ok "WordPress path updated successfully"
 }
@@ -973,22 +827,56 @@ update_site_url() {
     update_url_in_files
     
     # Database updates
-    wp search-replace "https://${V1_PRIMARY_DOMAIN}" "https://${V3SITEURL}" $WPCLIFLAGS --all-tables 2>&1
+    wp search-replace "https://${V1_PRIMARY_DOMAIN}" "https://${V3SITEURL}" $WPCLIFLAGS --all-tables 2>&1 | tee -a "$LOGFILE"
     
     # Check for Elementor
     if wp plugin is-installed elementor $WPCLIFLAGS 2>/dev/null && wp plugin is-active elementor $WPCLIFLAGS 2>/dev/null; then
-        wp elementor replace-urls "https://${V1_PRIMARY_DOMAIN}" "https://${V3SITEURL}" --allow-root 2>&1
+        wp elementor replace-urls "https://${V1_PRIMARY_DOMAIN}" "https://${V3SITEURL}" --allow-root 2>&1 | tee -a "$LOGFILE"
     fi
     
-    wp cache flush $WPCLIFLAGS 2>&1
+    wp cache flush $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     
     print_ok "Site URL updated successfully"
 }
 
 #===============================================================
+# Helper Function: Run WP-CLI Command with Timeout and Retry
+#===============================================================
+run_wp_with_retry() {
+    local max_attempts=3
+    local timeout_seconds=30
+    local attempt=1
+    local cmd="$@"
+    
+    while [ $attempt -le $max_attempts ]; do
+        print_info "Attempt $attempt/$max_attempts: Running command..."
+        
+        if timeout $timeout_seconds $cmd 2>&1 | tee -a "$LOGFILE"; then
+            return 0  # Success
+        else
+            local exit_code=$?
+            if [ $exit_code -eq 124 ]; then
+                print_warning "Command timed out after ${timeout_seconds}s"
+            else
+                print_warning "Command failed with exit code: $exit_code"
+            fi
+            
+            if [ $attempt -lt $max_attempts ]; then
+                print_info "Waiting 5 seconds before retry..."
+                sleep 5
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    print_error "Command failed after $max_attempts attempts"
+    return 1
+}
+
+#===============================================================
 # Disable Maintenance Modes
 #===============================================================
-
 disable_maintenance_modes() {
     if [ "$DISABLE_MAINTENANCE" != "Y" ]; then
         return
@@ -998,32 +886,40 @@ disable_maintenance_modes() {
     print_info "Disabling maintenance mode(s)..."
     
     cd "$V3SITEPATH" || {
-        error "Failed to access site path: $V3SITEPATH"
+        print_error "Failed to access site path: $V3SITEPATH"
         return 1
     }
     
     # Check for Simple Maintenance plugin
-    if wp plugin is-installed simple-maintenance $WPCLIFLAGS 2>/dev/null; then
-        if wp plugin is-active simple-maintenance $WPCLIFLAGS 2>/dev/null; then
-            wp plugin deactivate simple-maintenance $WPCLIFLAGS 2>&1
+    if run_wp_with_retry wp plugin is-installed simple-maintenance $WPCLIFLAGS; then
+        if run_wp_with_retry wp plugin is-active simple-maintenance $WPCLIFLAGS; then
+            run_wp_with_retry wp plugin deactivate simple-maintenance $WPCLIFLAGS || {
+                print_warning "Failed to deactivate simple-maintenance after retries"
+            }
         fi
-        wp plugin uninstall simple-maintenance $WPCLIFLAGS 2>&1
-        echo "Simple Maintenance plugin deactivated and uninstalled"
+        run_wp_with_retry wp plugin uninstall simple-maintenance $WPCLIFLAGS || {
+            print_warning "Failed to uninstall simple-maintenance after retries"
+        }
+        log_output "Simple Maintenance plugin deactivated and uninstalled"
     else
         # BuddyBoss App maintenance mode
-        if wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
-            wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS 2>&1
-            echo "BuddyBoss App maintenance deactivated"
+        if run_wp_with_retry wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null; then
+            run_wp_with_retry wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS || {
+                print_warning "Failed to update bbapp_settings after retries"
+            }
+            log_output "BuddyBoss App maintenance deactivated"
         fi
-
+        
         # BuddyBoss Theme maintenance mode
-        if wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
-            wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS 2>&1
-            echo "BuddyBoss Theme maintenance mode deactivated"
+        if run_wp_with_retry wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null; then
+            run_wp_with_retry wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS || {
+                print_warning "Failed to update buddyboss_theme_options after retries"
+            }
+            log_output "BuddyBoss Theme maintenance mode deactivated"
         fi
     fi
     
-    print_ok "Maintenance mode(s) successfully disabled"
+    print_ok "Maintenance mode(s) processing completed"
 }
 
 #===============================================================
@@ -1040,12 +936,12 @@ remove_incompatible_cache_plugins() {
     for plugin in "${cache_plugins[@]}"; do
         if wp plugin is-installed "$plugin" $WPCLIFLAGS 2>/dev/null; then
             if wp plugin is-active "$plugin" $WPCLIFLAGS 2>/dev/null; then
-                wp plugin deactivate "$plugin" $WPCLIFLAGS 2>&1
-                echo "Plugin deactivated: $plugin"
+                wp plugin deactivate "$plugin" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+                log_output "Plugin deactivated: $plugin"
             fi
             
-            wp plugin uninstall "$plugin" $WPCLIFLAGS 2>&1
-            echo "Plugin removed: $plugin"
+            wp plugin uninstall "$plugin" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+            log_output "Plugin removed: $plugin"
             removed_count=$((removed_count + 1))
         fi
     done
@@ -1053,7 +949,7 @@ remove_incompatible_cache_plugins() {
     if [ $removed_count -gt 0 ]; then
         print_ok "Removed $removed_count incompatible cache plugin(s)"
     else
-        echo "No incompatible cache plugins found"
+        log_output "No incompatible cache plugins found"
     fi
 }
 
@@ -1069,24 +965,25 @@ flush_cache_restore_keydb() {
         return 1
     }
 
-    wp cache flush $WPCLIFLAGS 2>&1
-    echo "Object cache flushed"
+    wp cache flush $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    log_output "Object cache flushed"
 
     if [ "$KEYDB_AVAILABLE" = true ]; then
         print_info "Restoring KeyDB integration..."
         
-        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1
-        echo "KeyDB integration re-enabled"
+        wp config set WP_REDIS_DISABLED false --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "KeyDB integration re-enabled"
         
         keydb_cli_output=$(keydb-cli -s /var/run/redis/redis.sock flushall 2>&1)
-        echo "KeyDB flushed"
+        echo "$keydb_cli_output" >> "$LOGFILE"
+        log_output "KeyDB flushed"
         
         print_ok "KeyDB integration restored and flushed"
     else
         print_info "KeyDB unavailable - keeping cache disabled and removing incompatible plugins..."
         
-        wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1
-        echo "KeyDB integration remains disabled"
+        wp config set WP_REDIS_DISABLED true --raw $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        log_output "KeyDB integration remains disabled"
         
         # Remove incompatible cache plugins
         remove_incompatible_cache_plugins
@@ -1118,7 +1015,7 @@ clear_bb_previews() {
     print_info "Clearing BuddyBoss platform previews..."
     
     # Remove all contents but keep the directory
-    rm -rf "${preview_dir:?}"/* 2>&1
+    rm -rf "${preview_dir:?}"/* 2>&1 | tee -a "$LOGFILE"
     
     print_ok "BuddyBoss platform previews cleared successfully"
 }
@@ -1133,7 +1030,7 @@ restore_php_settings() {
     
     cp "${V3SITEAPPDIR}/temp/custom_php.ini" "/home/${V3SITEUSER}/web/php/998-rapyd.ini"
     
-    lswsctrl condrestart 2>&1
+    lswsctrl condrestart 2>&1 | tee -a "$LOGFILE"
     
     print_ok "PHP settings restored"
 }
@@ -1190,7 +1087,7 @@ restore_cron_jobs() {
     chmod 600 "$cron_dest"
     chown "$V3SITEUSER:$V3SITEUSER" "$cron_dest"
     
-    echo "Cron jobs restored for user: $V3SITEUSER"
+    log_output "Cron jobs restored for user: $V3SITEUSER"
     
     print_ok "Cron jobs restored successfully"
 }
@@ -1230,7 +1127,7 @@ assign_domains() {
         www_flag="--www"
     fi
     
-    if rapyd domain add --domain "$V1_PRIMARY_DOMAIN" $www_flag --slug "$V3SITESLUG" 2>&1; then
+    if rapyd domain add --domain "$V1_PRIMARY_DOMAIN" $www_flag --slug "$V3SITESLUG" 2>&1 | tee -a "$LOGFILE"; then
         if [ -n "$www_flag" ]; then
             assigned_domains+=("$V1_PRIMARY_DOMAIN" "www.$V1_PRIMARY_DOMAIN")
         else
@@ -1249,7 +1146,7 @@ assign_domains() {
                 www_flag="--www"
             fi
             
-            if rapyd domain add --domain "$domain" $www_flag --slug "$V3SITESLUG" 2>&1; then
+            if rapyd domain add --domain "$domain" $www_flag --slug "$V3SITESLUG" 2>&1 | tee -a "$LOGFILE"; then
                 if [ -n "$www_flag" ]; then
                     assigned_domains+=("$domain" "www.$domain")
                 else
@@ -1288,14 +1185,14 @@ create_admin_user() {
     local admin_email="migrations_${random_id}@rapyd.cloud"
     
     # Create admin user
-    wp user create "$admin_user" "$admin_email" --role=administrator --user_pass="$random_pass" $WPCLIFLAGS 2>&1
+    wp user create "$admin_user" "$admin_email" --role=administrator --user_pass="$random_pass" $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
     
     # Store credentials for later use in summary
     ADMIN_USER="$admin_user"
     ADMIN_EMAIL="$admin_email"
     ADMIN_PASS="$random_pass"
     
-    echo "Admin user created: ${admin_user} | ${admin_email}"
+    log_output "Admin user created: ${admin_user} | ${admin_email}"
     
     print_ok "Temporary admin user created successfully"
 }
@@ -1327,29 +1224,30 @@ print_summary() {
     print_header "       *** SITE IMPORT COMPLETED SUCCESSFULLY ***"
     print_header "==============================================================="
     print_header ""
-    echo "The site has been successfully imported but there are steps pending:"
+    log_output "The site has been successfully imported but there are steps pending:"
     print_header ""
-    echo "1. Transfer the IP from v1"
-    echo "2. Transfer domains from v1"
-    echo "3. Associate the domain to this site through Rapyd Dashboard"
-    echo "4. Update DNS"
-    echo "5. Install SSL certificate"
+    log_output "1. Transfer the IP from v1"
+    log_output "2. Transfer domains from v1"
+    log_output "3. Associate the domain to this site through Rapyd Dashboard"
+    log_output "4. Update DNS"
+    log_output "5. Install SSL certificate"
     print_header ""
-    echo "Once DNS changes propagate, install the SSL certificate with:"
-    echo "rapyd ssl issue --domain ${login_domain}"
+    log_output "Once DNS changes propagate, install the SSL certificate with:"
+    log_output "rapyd ssl issue --domain ${login_domain}"
     print_header ""
     print_header "=== TEMPORARY ADMIN CREDENTIALS ==="
     
-    echo "Login URL: https://${login_domain}/${login_path}"
-    echo "Username: ${ADMIN_USER}"
-    echo "Email: ${ADMIN_EMAIL}"
-    echo "Password: ${ADMIN_PASS}"
+    log_output "Login URL: https://${login_domain}/${login_path}"
+    log_output "Username: ${ADMIN_USER}"
+    log_output "Email: ${ADMIN_EMAIL}"
+    log_output "Password: ${ADMIN_PASS}"
     print_header ""
-    echo "Once you verify the site is working as expected. Complete the artifacts cleanup by running:"
-    echo "${SCRIPT_PATH} --cleanup"
+    log_output "To delete this user after verification, run:"
+    log_output "wp user delete ${ADMIN_USER} --allow-root --yes"
     print_header ""
     print_header "==============================================================="
     print_header ""
+    print_info "Log file saved to: ${LOGFILE}"
 }
 
 #===============================================================
@@ -1419,20 +1317,10 @@ main() {
 	
     # Enable mu-plugins
     enable_mu_plugins
-
-	# Save state file for future cleanup
-    save_state_file
-	
+    
     # Print summary
     print_summary
 }
-
-# Parse command line arguments
-if [ "${1:-}" = "--cleanup" ]; then
-    CLEANUP_MODE=true
-    cleanup_artifacts
-    exit 0
-fi
 
 # Run main function
 main
