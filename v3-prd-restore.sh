@@ -840,9 +840,43 @@ update_site_url() {
 }
 
 #===============================================================
+# Helper Function: Run WP-CLI Command with Timeout and Retry
+#===============================================================
+run_wp_with_retry() {
+    local max_attempts=3
+    local timeout_seconds=30
+    local attempt=1
+    local cmd="$@"
+    
+    while [ $attempt -le $max_attempts ]; do
+        print_info "Attempt $attempt/$max_attempts: Running command..."
+        
+        if timeout $timeout_seconds $cmd 2>&1 | tee -a "$LOGFILE"; then
+            return 0  # Success
+        else
+            local exit_code=$?
+            if [ $exit_code -eq 124 ]; then
+                print_warning "Command timed out after ${timeout_seconds}s"
+            else
+                print_warning "Command failed with exit code: $exit_code"
+            fi
+            
+            if [ $attempt -lt $max_attempts ]; then
+                print_info "Waiting 5 seconds before retry..."
+                sleep 5
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    print_error "Command failed after $max_attempts attempts"
+    return 1
+}
+
+#===============================================================
 # Disable Maintenance Modes
 #===============================================================
-
 disable_maintenance_modes() {
     if [ "$DISABLE_MAINTENANCE" != "Y" ]; then
         return
@@ -852,32 +886,40 @@ disable_maintenance_modes() {
     print_info "Disabling maintenance mode(s)..."
     
     cd "$V3SITEPATH" || {
-        error "Failed to access site path: $V3SITEPATH"
+        print_error "Failed to access site path: $V3SITEPATH"
         return 1
     }
     
     # Check for Simple Maintenance plugin
-    if wp plugin is-installed simple-maintenance $WPCLIFLAGS 2>/dev/null; then
-        if wp plugin is-active simple-maintenance $WPCLIFLAGS 2>/dev/null; then
-            wp plugin deactivate simple-maintenance $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+    if run_wp_with_retry wp plugin is-installed simple-maintenance $WPCLIFLAGS; then
+        if run_wp_with_retry wp plugin is-active simple-maintenance $WPCLIFLAGS; then
+            run_wp_with_retry wp plugin deactivate simple-maintenance $WPCLIFLAGS || {
+                print_warning "Failed to deactivate simple-maintenance after retries"
+            }
         fi
-        wp plugin uninstall simple-maintenance $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        run_wp_with_retry wp plugin uninstall simple-maintenance $WPCLIFLAGS || {
+            print_warning "Failed to uninstall simple-maintenance after retries"
+        }
         log_output "Simple Maintenance plugin deactivated and uninstalled"
     else
         # BuddyBoss App maintenance mode
-        if wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
-            wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        if run_wp_with_retry wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null; then
+            run_wp_with_retry wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS || {
+                print_warning "Failed to update bbapp_settings after retries"
+            }
             log_output "BuddyBoss App maintenance deactivated"
         fi
-
+        
         # BuddyBoss Theme maintenance mode
-        if wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
-            wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS 2>&1 | tee -a "$LOGFILE"
+        if run_wp_with_retry wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null; then
+            run_wp_with_retry wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS || {
+                print_warning "Failed to update buddyboss_theme_options after retries"
+            }
             log_output "BuddyBoss Theme maintenance mode deactivated"
         fi
     fi
     
-    print_ok "Maintenance mode(s) successfully disabled"
+    print_ok "Maintenance mode(s) processing completed"
 }
 
 #===============================================================
