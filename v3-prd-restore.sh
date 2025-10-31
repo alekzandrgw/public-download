@@ -5,8 +5,9 @@
 #===============================================================
 # Description: Restores WordPress sites from V1 backups to V3
 # Author: Alexander Gil
-# Version: 5.5
+# Version: 5.6
 #===============================================================
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 
 set -euo pipefail
 
@@ -21,8 +22,10 @@ NC='\033[0m' # No Color
 MOUNTPOINT="/mnt/v1node"
 BACKUP_SOURCE="${MOUNTPOINT}/v1_backups"
 WPCLIFLAGS="--skip-plugins --skip-themes --quiet --allow-root"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
 KEYDB_AVAILABLE=true
+STATE_FILE="/root/.restore_state.env"
+CLEANUP_MODE=false
 
 # V1 Variables (parsed from server_config.txt)
 V1_MULTISITE=""
@@ -38,9 +41,6 @@ V3SITEPATH=""
 V3SITEUSER=""
 V3SITEBASEDIR=""
 V3SITEAPPDIR=""
-
-# Cleanup options
-RUN_CLEANUP_AFTER=false
 
 # V3 Database Variables
 V3SITEDBNAME=""
@@ -62,19 +62,19 @@ DISABLE_MAINTENANCE="Y"
 #===============================================================
 
 print_info() {
-    echo -e "${LBLUE}[INFO] $1${NC}"
+    echo -e "${LBLUE}[${TIMESTAMP} - INFO] $1${NC}"
 }
 
 print_ok() {
-    echo -e "${GREEN}[OK] $1${NC}"
+    echo -e "${GREEN}[${TIMESTAMP} - OK] $1${NC}"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING] $1${NC}"
+    echo -e "${YELLOW}[${TIMESTAMP} - WARNING] $1${NC}"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR] $1${NC}"
+    echo -e "${RED}[${TIMESTAMP} - ERROR] $1${NC}"
 }
 
 print_header() {
@@ -108,94 +108,155 @@ enable_mu_plugins() {
 trap enable_mu_plugins EXIT
 
 #===============================================================
-# Cleanup Helper
+# State File Management
+#===============================================================
+
+save_state_file() {
+    print_header ""
+    print_info "Saving restore state for future cleanup..."
+    
+    cat > "$STATE_FILE" << EOF
+# Restore State File
+# Generated: $(date)
+# Site: ${V3SITESLUG}
+
+V3SITESLUG="${V3SITESLUG}"
+V3SITEURL="${V3SITEURL}"
+V3SITEPATH="${V3SITEPATH}"
+V3SITEUSER="${V3SITEUSER}"
+V3SITEBASEDIR="${V3SITEBASEDIR}"
+V3SITEAPPDIR="${V3SITEAPPDIR}"
+ADMIN_USER="${ADMIN_USER}"
+EOF
+    
+    chmod 600 "$STATE_FILE"
+    echo "State file created: ${STATE_FILE}"
+    print_ok "State saved successfully"
+}
+
+load_state_file() {
+    if [ ! -f "$STATE_FILE" ]; then
+        print_error "No restore state file found: ${STATE_FILE}"
+        print_error "Cannot perform cleanup without a previous successful restore"
+        exit 1
+    fi
+    
+    print_info "Loading state from: ${STATE_FILE}"
+    
+    # Source the state file
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+    
+    # Validate required variables
+    local required_vars=("V3SITESLUG" "V3SITEURL" "V3SITEPATH" "V3SITEUSER" "V3SITEBASEDIR" "V3SITEAPPDIR" "ADMIN_USER")
+    for var in "${required_vars[@]}"; do
+        if [ -z "${!var:-}" ]; then
+            print_error "Invalid state file: missing $var"
+            exit 1
+        fi
+    done
+    
+    print_ok "State loaded successfully"
+}
+
+#===============================================================
+# Cleanup Artifacts
 #===============================================================
 
 cleanup_artifacts() {
     print_header ""
-    print_header "=== Cleanup Artifacts ==="
+    print_header "==============================================================="
+    print_header "           V3 Transition - Cleanup Artifacts"
+    print_header "==============================================================="
     print_header ""
-
-    local app_dir="${V3SITEAPPDIR:-}"
-
-    if [ -z "$app_dir" ]; then
-        read -p "Enter the V3 site app directory to clean (e.g., /home/user/site/www/app): " app_dir
-        app_dir="${app_dir%/}"
-    fi
-
-    if [ -z "$app_dir" ]; then
-        print_error "V3 site app directory is required for cleanup."
-        return 1
-    fi
-
-    V3SITEAPPDIR="$app_dir"
-
-    if [ -z "${V3SITEBASEDIR:-}" ]; then
-        V3SITEBASEDIR="${V3SITEAPPDIR%/www/app}"
-    fi
-
-    local cleanup_targets=(
-        "${V3SITEAPPDIR}/public-backup"
-        "${V3SITEAPPDIR}/temp"
-        "${V3SITEAPPDIR}/app/temp"
-    )
-
-    local base_temp=""
-    if [ -n "$V3SITEBASEDIR" ] && [ "$V3SITEBASEDIR" != "$V3SITEAPPDIR" ]; then
-        base_temp="${V3SITEBASEDIR}/app/temp"
-        if [ "$base_temp" != "${V3SITEAPPDIR}/temp" ] && [ "$base_temp" != "${V3SITEAPPDIR}/app/temp" ]; then
-            cleanup_targets+=("$base_temp")
-        fi
-    fi
-
-    local cleanup_success=true
-
-    for target in "${cleanup_targets[@]}"; do
-        target="${target%/}"
-        if [ -z "$target" ]; then
-            continue
-        fi
-
-        if [ -d "$target" ]; then
-            print_info "Removing cleanup directory: $target"
-            if ! rm -rf -- "$target"; then
-                print_error "Failed to remove: $target"
-                cleanup_success=false
-            else
-                print_ok "Removed: $target"
-            fi
+    
+    # Load state file
+    load_state_file
+    
+    print_header "=== Cleanup Summary ==="
+    print_header ""
+    echo "Site: ${V3SITESLUG}"
+    echo "URL: ${V3SITEURL}"
+    echo "Admin user to remove: ${ADMIN_USER}"
+    echo "Backup directory: ${V3SITEAPPDIR}/public-backup"
+    echo "Temp directory: ${V3SITEAPPDIR}/temp"
+    echo "State file: ${STATE_FILE}"
+    print_header ""
+    
+    read -p "Press Enter to proceed with cleanup or Ctrl+C to cancel..."
+    
+    # Remove admin user
+    print_header ""
+    print_info "Removing temporary admin user..."
+    
+    if [ -d "$V3SITEPATH" ]; then
+        cd "$V3SITEPATH"
+        
+        if wp user get "$ADMIN_USER" $WPCLIFLAGS &>/dev/null; then
+            wp user delete "$ADMIN_USER" --yes $WPCLIFLAGS 2>&1
+            print_ok "Admin user '${ADMIN_USER}' removed successfully"
         else
-            print_info "Cleanup target not found, skipping: $target"
+            print_warning "Admin user '${ADMIN_USER}' not found (may have been removed already)"
         fi
-    done
-
-    if [ "$cleanup_success" = true ]; then
-        print_info "Cleanup directories processed successfully."
-        print_warning "Script will now remove itself from disk: $0"
-        rm -f -- "$0"
     else
-        print_error "Cleanup encountered errors; script will not remove itself."
-        return 1
+        print_warning "WordPress path not found, skipping admin user removal"
     fi
-}
+    
+    # Remove public-backup directory
+    print_header ""
+    print_info "Removing backup directory..."
+    
+    local backup_dir="${V3SITEAPPDIR}/public-backup"
+    if [ -d "$backup_dir" ]; then
+        local backup_size=$(du -sh "$backup_dir" | awk '{print $1}')
+        rm -rf "$backup_dir"
+        print_ok "Backup directory removed [Size: ${backup_size}]"
+    else
+        print_warning "Backup directory not found (may have been removed already)"
+    fi
+    
+    # Remove temp directory
+    print_header ""
+    print_info "Removing temp directory..."
+    
+    local temp_dir="${V3SITEAPPDIR}/temp"
+    if [ -d "$temp_dir" ]; then
+        local temp_size=$(du -sh "$temp_dir" | awk '{print $1}')
+        rm -rf "$temp_dir"
+        print_ok "Temp directory removed [Size: ${temp_size}]"
+    else
+        print_warning "Temp directory not found (may have been removed already)"
+    fi
+    
+    # Remove state file
+    print_header ""
+    print_info "Removing state file..."
+    
+    if [ -f "$STATE_FILE" ]; then
+        rm -f "$STATE_FILE"
+        print_ok "State file removed"
+    fi
+    
+    # Remove script itself
+    set +e
+    print_header ""
+    print_info "Deleting myself =("
+      rm -f -- "$SCRIPT_PATH"
+      status=$?
 
-#===============================================================
-# Argument Parsing
-#===============================================================
-
-parse_arguments() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --cleanup)
-                RUN_CLEANUP_AFTER=true
-                shift
-                ;;
-            *)
-                print_error "Unknown option: $1"
-                exit 1
-                ;;
-        esac
-    done
+      if [ $status -eq 0 ]; then
+          print_ok "Goodbye..."
+      else
+          print_error "Failed to delete script (exit code: $status)"
+      fi
+    print_header ""
+    print_header "==============================================================="
+    print_header "          *** CLEANUP COMPLETED SUCCESSFULLY ***"
+    print_header "==============================================================="
+    print_header ""
+    echo "All restore artifacts have been removed from the system."
+    print_header ""
+    exit 0
 }
 
 #===============================================================
@@ -795,10 +856,6 @@ import_database() {
 # Update WordPress Constants
 #===============================================================
 
-#===============================================================
-# Update WordPress Constants
-#===============================================================
-
 update_wp_constants() {
     print_header ""
     print_info "Updating WordPress Constants..."
@@ -920,43 +977,9 @@ update_site_url() {
 }
 
 #===============================================================
-# Helper Function: Run WP-CLI Command with Timeout and Retry
-#===============================================================
-run_wp_with_retry() {
-    local max_attempts=5
-    local timeout_seconds=30
-    local attempt=1
-    local cmd="$@"
-    
-    while [ $attempt -le $max_attempts ]; do
-        print_info "Attempt $attempt/$max_attempts: Running command..."
-        
-        if timeout $timeout_seconds $cmd 2>&1 | tee -a "$LOGFILE"; then
-            return 0  # Success
-        else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                print_warning "Command timed out after ${timeout_seconds}s"
-            else
-                print_warning "Command failed with exit code: $exit_code"
-            fi
-            
-            if [ $attempt -lt $max_attempts ]; then
-                print_info "Waiting 15 seconds before retry..."
-                sleep 15
-            fi
-        fi
-        
-        attempt=$((attempt + 1))
-    done
-    
-    print_error "Command failed after $max_attempts attempts"
-    return 1
-}
-
-#===============================================================
 # Disable Maintenance Modes
 #===============================================================
+
 disable_maintenance_modes() {
     if [ "$DISABLE_MAINTENANCE" != "Y" ]; then
         return
@@ -971,36 +994,29 @@ disable_maintenance_modes() {
     }
     
     # Check for Simple Maintenance plugin
-    if run_wp_with_retry wp plugin is-installed simple-maintenance $WPCLIFLAGS; then
-        if run_wp_with_retry wp plugin is-active simple-maintenance $WPCLIFLAGS; then
-            run_wp_with_retry wp plugin deactivate simple-maintenance $WPCLIFLAGS || {
-                print_warning "Failed to deactivate simple-maintenance after retries"
-            }
+    if wp plugin is-installed simple-maintenance $WPCLIFLAGS 2>/dev/null; then
+        if wp plugin is-active simple-maintenance $WPCLIFLAGS 2>/dev/null; then
+            wp plugin deactivate simple-maintenance $WPCLIFLAGS 2>&1
         fi
-        run_wp_with_retry wp plugin uninstall simple-maintenance $WPCLIFLAGS || {
-            print_warning "Failed to uninstall simple-maintenance after retries"
-        }
-        log_output "Simple Maintenance plugin deactivated and uninstalled"
+        wp plugin uninstall simple-maintenance $WPCLIFLAGS 2>&1
+        echo "Simple Maintenance plugin deactivated and uninstalled"
     else
         # BuddyBoss App maintenance mode
-        if run_wp_with_retry wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null; then
-            run_wp_with_retry wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS || {
-                print_warning "Failed to update bbapp_settings after retries"
-            }
-            log_output "BuddyBoss App maintenance deactivated"
+        if wp option pluck bbapp_settings app_maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
+            wp option patch update bbapp_settings app_maintenance_mode 0 $WPCLIFLAGS 2>&1
+            echo "BuddyBoss App maintenance deactivated"
         fi
-        
+
         # BuddyBoss Theme maintenance mode
-        if run_wp_with_retry wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null; then
-            run_wp_with_retry wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS || {
-                print_warning "Failed to update buddyboss_theme_options after retries"
-            }
-            log_output "BuddyBoss Theme maintenance mode deactivated"
+        if wp option pluck buddyboss_theme_options maintenance_mode $WPCLIFLAGS >/dev/null 2>&1; then
+            wp option patch update buddyboss_theme_options maintenance_mode 0 $WPCLIFLAGS 2>&1
+            echo "BuddyBoss Theme maintenance mode deactivated"
         fi
     fi
     
-    print_ok "Maintenance mode(s) processing completed"
+    print_ok "Maintenance mode(s) successfully disabled"
 }
+
 #===============================================================
 # Remove Incompatible Cache Plugins
 #===============================================================
@@ -1279,14 +1295,6 @@ create_admin_user() {
 # Print Summary
 #===============================================================
 
-#===============================================================
-# Print Summary
-#===============================================================
-
-#===============================================================
-# Print Summary
-#===============================================================
-
 print_summary() {
     # Determine which domain/URL to use in the login URL
     local login_domain="$V1_PRIMARY_DOMAIN"
@@ -1301,30 +1309,31 @@ print_summary() {
     print_header "==============================================================="
     print_header "       *** SITE IMPORT COMPLETED SUCCESSFULLY ***"
     print_header "==============================================================="
-    print_header ""
+    echo ""
     echo "The site has been successfully imported but there are steps pending:"
-    print_header ""
-    echo "1. Transfer the IP from v1"
-    echo "2. Transfer domains from v1"
-    echo "3. Associate the domain to this site through Rapyd Dashboard"
-    echo "4. Update DNS"
-    echo "5. Install SSL certificate"
-    print_header ""
-    echo "Once DNS changes propagate, install the SSL certificate with:"
-    echo "rapyd ssl issue --domain ${login_domain}"
-    print_header ""
-    print_header "=== TEMPORARY ADMIN CREDENTIALS ==="
-    
-    echo "Login URL: https://${login_domain}/${login_path}"
-    echo "Username: ${ADMIN_USER}"
-    echo "Email: ${ADMIN_EMAIL}"
-    echo "Password: ${ADMIN_PASS}"
-    print_header ""
-    echo "To delete this user after verification, run:"
-    echo "wp user delete ${ADMIN_USER} --allow-root --yes"
-    print_header ""
+    echo ""
+    echo "1. Complete steps 25 to 30 from the main SOP"
+    echo "2. Install SSL certificate with:"
+    echo ""
+    echo "   rapyd ssl issue --domain ${login_domain}"
+    echo ""
+    echo "=== TEMPORARY ADMIN CREDENTIALS ==="
+    echo ""
+    echo "Use the following credentials to validate the site's functionality and appearance:"
+    echo ""
+    echo "   Login URL: https://${login_domain}/${login_path}"
+    echo "   Username: ${ADMIN_USER}"
+    echo "   Email: ${ADMIN_EMAIL}"
+    echo "   Password: ${ADMIN_PASS}"
+    echo ""
+    echo "=== POST-MIGRATION CLEANUP ==="
+    echo ""
+    echo "To finalize the migration, run this script in cleanup mode:"
+    echo ""
+    echo "   ${SCRIPT_PATH} --cleanup"
+    echo ""
     print_header "==============================================================="
-    print_header ""
+    echo ""
 }
 
 #===============================================================
@@ -1395,16 +1404,19 @@ main() {
     # Enable mu-plugins
     enable_mu_plugins
     
+    # Save state file for future cleanup
+    save_state_file
+    
     # Print summary
     print_summary
 }
 
-# Parse arguments and control execution
-parse_arguments "$@"
+# Parse command line arguments
+if [ "${1:-}" = "--cleanup" ]; then
+    CLEANUP_MODE=true
+    cleanup_artifacts
+    exit 0
+fi
 
 # Run main function
 main
-
-if [ "$RUN_CLEANUP_AFTER" = true ]; then
-    cleanup_artifacts
-fi
