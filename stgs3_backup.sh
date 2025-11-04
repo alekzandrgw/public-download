@@ -662,6 +662,7 @@ create_archive() {
         --exclude='ROOT/wp-content/ewww' \
         --exclude='ROOT/wp-content/smush-webp' \
         --exclude='ROOT/wp-content/uploads/wp-file-manager-pro/fm_backup' \
+        --exclude='ROOT/.git' \
         --exclude='*.log' \
         ROOT 2>"$tmp_tar_err" || true &
     local tar_pid=$!
