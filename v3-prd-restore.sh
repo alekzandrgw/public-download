@@ -57,6 +57,9 @@ V3SITEREDISPORT=""
 REPLACE_URL="N"
 DISABLE_MAINTENANCE="Y"
 
+# Normalized domain for summary output
+PRIMARY_DOMAIN_NORMALIZED=""
+
 #===============================================================
 # Helper Functions
 #===============================================================
@@ -1223,7 +1226,8 @@ assign_domains() {
     
     # Normalize primary domain (strip www. if present)
     local primary_domain=$(normalize_domain "$V1_PRIMARY_DOMAIN")
-    
+    PRIMARY_DOMAIN_NORMALIZED="$primary_domain"  # Store for use in print_summary
+
     # Check if both naked domain and www subdomain resolve
     local naked_resolves=false
     local www_resolves=false
@@ -1352,7 +1356,7 @@ print_summary() {
     echo "1. Complete steps 25 to 30 from the main SOP"
     echo "2. Install SSL certificate with:"
     echo ""
-    echo "   rapyd ssl issue --domain ${login_domain}"
+    echo "   rapyd ssl issue --domain ${PRIMARY_DOMAIN_NORMALIZED}"
     echo ""
     echo "=== TEMPORARY ADMIN CREDENTIALS ==="
     echo ""
