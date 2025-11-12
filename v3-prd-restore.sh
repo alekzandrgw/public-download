@@ -52,6 +52,8 @@ V3SITEDBHOST="127.0.0.1"
 V3SITEREDISHOST=""
 V3SITEREDISSCHEME=""
 V3SITEREDISPORT=""
+V3SITEREDISPREFIX=""
+V3SITEREDISDATABASE=""
 
 # User choices
 REPLACE_URL="N"
@@ -889,6 +891,8 @@ update_wp_constants() {
         V3SITEREDISHOST=$(wp config get WP_REDIS_HOST --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
         V3SITEREDISSCHEME=$(wp config get WP_REDIS_SCHEME --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
         V3SITEREDISPORT=$(wp config get WP_REDIS_PORT --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
+        V3SITEREDISPREFIX=$(wp config get WP_REDIS_PREFIX --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
+        V3SITEREDISDATABASE=$(wp config get WP_REDIS_DATABASE --config-file="${V3SITEAPPDIR}/public-backup/wp-config.php" $WPCLIFLAGS 2>/dev/null || echo "")
         
         if [ -n "$V3SITEREDISHOST" ]; then
             wp config set WP_REDIS_HOST "$V3SITEREDISHOST" $WPCLIFLAGS 2>&1
@@ -903,6 +907,16 @@ update_wp_constants() {
         if [ -n "$V3SITEREDISPORT" ]; then
             wp config set WP_REDIS_PORT "$V3SITEREDISPORT" $WPCLIFLAGS 2>&1
             echo "WP_REDIS_PORT updated"
+        fi
+        
+        if [ -n "$V3SITEREDISPREFIX" ]; then
+            wp config set WP_REDIS_PREFIX "$V3SITEREDISPREFIX" $WPCLIFLAGS 2>&1
+            echo "WP_REDIS_PREFIX updated"
+        fi
+        
+        if [ -n "$V3SITEREDISDATABASE" ]; then
+            wp config set WP_REDIS_DATABASE "$V3SITEREDISDATABASE" --raw $WPCLIFLAGS 2>&1
+            echo "WP_REDIS_DATABASE updated"
         fi
         
         print_ok "Redis constants configured"
