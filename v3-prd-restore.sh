@@ -1190,12 +1190,18 @@ restore_cron_jobs() {
 # Assign Domains
 #===============================================================
 
-check_www_resolvable() {
+normalize_domain() {
+    local domain=$1
+    # Remove www. prefix if present (case-insensitive)
+    echo "$domain" | sed 's/^[Ww][Ww][Ww]\.//'
+}
+
+check_domain_resolvable() {
     local domain=$1
     local timeout=5
     
-    # Check if www subdomain is resolvable with timeout
-    if timeout $timeout dig +short "www.${domain}" | grep -q .; then
+    # Check if domain is resolvable with timeout
+    if timeout $timeout dig +short "$domain" | grep -q .; then
         return 0
     else
         return 1
@@ -1205,7 +1211,7 @@ check_www_resolvable() {
 assign_domains() {
     # Skip domain assignment if primary domain is rapydapps.cloud
     if [[ "$V1_PRIMARY_DOMAIN" == *"rapydapps.cloud" ]]; then
-    	echo ""
+        echo ""
         print_info "Skipping domain assignment (rapydapps.cloud domain detected)"
         return 0
     fi
@@ -1215,28 +1221,59 @@ assign_domains() {
     
     local assigned_domains=()
     
-    # Assign primary domain
+    # Normalize primary domain (strip www. if present)
+    local primary_domain=$(normalize_domain "$V1_PRIMARY_DOMAIN")
+    
+    # Check if both naked domain and www subdomain resolve
+    local naked_resolves=false
+    local www_resolves=false
+    
+    if check_domain_resolvable "$primary_domain"; then
+        naked_resolves=true
+    fi
+    
+    if check_domain_resolvable "www.${primary_domain}"; then
+        www_resolves=true
+    fi
+    
+    # Determine www_flag based on what resolves
     local www_flag=""
-    if check_www_resolvable "$V1_PRIMARY_DOMAIN"; then
+    if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
         www_flag="--www"
     fi
     
-    if rapyd domain add --domain "$V1_PRIMARY_DOMAIN" $www_flag --slug "$V3SITESLUG" 2>&1; then
+    if rapyd domain add --domain "$primary_domain" $www_flag --slug "$V3SITESLUG" 2>&1; then
         if [ -n "$www_flag" ]; then
-            assigned_domains+=("$V1_PRIMARY_DOMAIN" "www.$V1_PRIMARY_DOMAIN")
+            assigned_domains+=("$primary_domain" "www.$primary_domain")
         else
-            assigned_domains+=("$V1_PRIMARY_DOMAIN")
+            assigned_domains+=("$primary_domain")
         fi
     else
-        print_warning "Failed to assign domain: $V1_PRIMARY_DOMAIN"
+        print_warning "Failed to assign domain: $primary_domain"
     fi
     
     # Assign secondary domains if they exist
     if [ -n "$V1_SECONDARY_DOMAINS" ]; then
         IFS=',' read -ra DOMAINS <<< "$V1_SECONDARY_DOMAINS"
         for domain in "${DOMAINS[@]}"; do
-            www_flag=""
-            if check_www_resolvable "$domain"; then
+            # Normalize secondary domain (strip www. if present)
+            domain=$(normalize_domain "$domain")
+            
+            # Check if both naked domain and www subdomain resolve
+            local naked_resolves=false
+            local www_resolves=false
+            
+            if check_domain_resolvable "$domain"; then
+                naked_resolves=true
+            fi
+            
+            if check_domain_resolvable "www.${domain}"; then
+                www_resolves=true
+            fi
+            
+            # Determine www_flag based on what resolves
+            local www_flag=""
+            if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
                 www_flag="--www"
             fi
             
