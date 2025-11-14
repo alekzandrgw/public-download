@@ -1330,8 +1330,8 @@ create_admin_user() {
     # Generate random password (16 characters, URL-safe)
     local random_pass=$(openssl rand -base64 12 | tr -d '\n')
     
-    local admin_user="rapyd_${random_id}"
-    local admin_email="migrations_${random_id}@rapyd.cloud"
+    local admin_user="rapyd${random_id}"
+    local admin_email="migrations${random_id}@rapyd.cloud"
     
     # Create admin user
     wp user create "$admin_user" "$admin_email" --role=administrator --user_pass="$random_pass" $WPCLIFLAGS 2>&1
