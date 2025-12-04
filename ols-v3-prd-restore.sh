@@ -378,7 +378,7 @@ validate_commands() {
     print_header ""
     
     local missing_commands=()
-    local required_commands=("wp" "rapyd" "mysql" "rsync" "tar" "dig" "keydb-cli" "jq" "lswsctrl")
+    local required_commands=("wp" "rapyd" "mysql" "rsync" "tar" "dig" "keydb-cli" "jq")
     
     for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
@@ -1141,7 +1141,7 @@ restore_php_settings() {
     
     cp "${V3SITEAPPDIR}/temp/custom_php.ini" "/home/${V3SITEUSER}/web/php/998-rapyd.ini"
     
-    lswsctrl condrestart 2>&1
+    systemctl restart lsws 2>&1
     
     print_ok "PHP settings restored"
 }
