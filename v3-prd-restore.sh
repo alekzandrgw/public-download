@@ -1213,6 +1213,19 @@ normalize_domain() {
     echo "$domain" | sed 's/^[Ww][Ww][Ww]\.//'
 }
 
+is_subdomain() {
+    local domain=$1
+    # Count the number of dots
+    # Root domain has 1 dot (example.com)
+    # Subdomain has 2+ dots (app.example.com, www.example.com, etc.)
+    local dot_count=$(echo "$domain" | grep -o '\.' | wc -l)
+    if [ $dot_count -ge 2 ]; then
+        return 0  # true - is a subdomain
+    else
+        return 1  # false - is not a subdomain
+    fi
+}
+
 check_domain_resolvable() {
     local domain=$1
     local timeout=5
@@ -1250,14 +1263,17 @@ assign_domains() {
         naked_resolves=true
     fi
     
-    if check_domain_resolvable "www.${primary_domain}"; then
-        www_resolves=true
-    fi
-    
-    # Determine www_flag based on what resolves
+    # Only check for www subdomain if this is NOT a subdomain (i.e., it's a root domain)
     local www_flag=""
-    if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
-        www_flag="--www"
+    if ! is_subdomain "$primary_domain"; then
+        if check_domain_resolvable "www.${primary_domain}"; then
+            www_resolves=true
+        fi
+        
+        # Determine www_flag based on what resolves (only for root domains)
+        if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
+            www_flag="--www"
+        fi
     fi
     
     if rapyd domain add --domain "$primary_domain" $www_flag --slug "$V3SITESLUG" 2>&1; then
@@ -1285,14 +1301,17 @@ assign_domains() {
                 naked_resolves=true
             fi
             
-            if check_domain_resolvable "www.${domain}"; then
-                www_resolves=true
-            fi
-            
-            # Determine www_flag based on what resolves
+            # Only check for www subdomain if this is NOT a subdomain (i.e., it's a root domain)
             local www_flag=""
-            if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
-                www_flag="--www"
+            if ! is_subdomain "$domain"; then
+                if check_domain_resolvable "www.${domain}"; then
+                    www_resolves=true
+                fi
+                
+                # Determine www_flag based on what resolves (only for root domains)
+                if [ "$www_resolves" = true ] || [ "$naked_resolves" = true ]; then
+                    www_flag="--www"
+                fi
             fi
             
             if rapyd domain add --domain "$domain" $www_flag --slug "$V3SITESLUG" 2>&1; then
