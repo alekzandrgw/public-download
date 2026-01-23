@@ -7,7 +7,16 @@
 #              before and after WordPress site migrations
 # Author: Alexander Gil
 # Version: 1.0
+#
+# Usage:
+#   Local:  ./envprep.sh --pre-migration
+#           ./envprep.sh --post-migration
+#
+#   Remote: wget -qO- "URL?$(date +%s)" | bash -s -- --pre-migration
+#           wget -qO- "URL?$(date +%s)" | bash -s -- --post-migration
 #===============================================================
+
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 
 set -euo pipefail
 
@@ -227,6 +236,10 @@ restore_litespeed_config() {
     else
         print_warning "Failed to disable cache for logged-in users"
     fi
+
+    # Delete the export file after successful import
+    print_info "Removing LiteSpeed configuration export file..."
+    rm -f "lsconf-premig.data" && print_ok "lsconf-premig.data deleted"
 }
 
 regenerate_litespeed_rules() {
@@ -414,6 +427,12 @@ main() {
         run_pre_migration
     else
         run_post_migration
+    fi
+
+    # Auto-delete script if running from a file (not piped)
+    if [ -f "$SCRIPT_PATH" ] && [[ "$SCRIPT_PATH" != "bash" ]] && [[ "$SCRIPT_PATH" != "-bash" ]]; then
+        print_info "Cleaning up script file..."
+        rm -f -- "$SCRIPT_PATH" && print_ok "Script deleted: $SCRIPT_PATH"
     fi
 }
 
