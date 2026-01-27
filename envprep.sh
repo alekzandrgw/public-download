@@ -28,8 +28,36 @@ LBLUE='\033[1;34m'
 NC='\033[0m' # No Color
 
 # Global variables
-WPCLIFLAGS="--allow-root --skip-themes"
+WPCLIFLAGS_BASE="--allow-root --skip-themes"
 TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+
+# Generate skip-plugins flag that excludes all plugins EXCEPT the specified one
+# Usage: get_skip_plugins_except "plugin-name"
+get_skip_plugins_except() {
+    local keep_plugin="$1"
+    local plugins_to_skip
+    plugins_to_skip=$(wp plugin list --field=name --skip-plugins --skip-themes $WPCLIFLAGS_BASE 2>/dev/null | grep -v "^${keep_plugin}$" | paste -sd, -)
+    if [ -n "$plugins_to_skip" ]; then
+        echo "--skip-plugins=${plugins_to_skip}"
+    else
+        echo "--skip-plugins"
+    fi
+}
+
+# Get WP CLI flags for LiteSpeed commands (keeps only litespeed-cache active)
+get_wpcli_flags_ls() {
+    echo "$WPCLIFLAGS_BASE $(get_skip_plugins_except 'litespeed-cache')"
+}
+
+# Get WP CLI flags for Redis commands (keeps only redis-cache active)
+get_wpcli_flags_redis() {
+    echo "$WPCLIFLAGS_BASE $(get_skip_plugins_except 'redis-cache')"
+}
+
+# Get WP CLI flags for general commands (skips all plugins)
+get_wpcli_flags() {
+    echo "$WPCLIFLAGS_BASE --skip-plugins"
+}
 
 #===============================================================
 # Helper Functions
@@ -82,11 +110,15 @@ get_site_users() {
 handle_litespeed_cache() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
+    local WPCLIFLAGS WPCLIFLAGS_LS
 
     cd "$wp_path" || {
         print_error "Failed to access WordPress directory for user: $user"
         return 1
     }
+
+    # Generate flags for this site
+    WPCLIFLAGS=$(get_wpcli_flags)
 
     # Check if LiteSpeed Cache is installed
     if ! wp plugin is-installed litespeed-cache $WPCLIFLAGS 2>/dev/null; then
@@ -108,9 +140,12 @@ handle_litespeed_cache() {
         print_ok "LiteSpeed Cache activated"
     fi
 
+    # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
+    WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
+
     # Export LiteSpeed Cache configuration
     print_info "Exporting LiteSpeed Cache configuration..."
-    if wp litespeed-option export --filename=lsconf-premig.data $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-option export --filename=lsconf-premig.data $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed Cache configuration exported to lsconf-premig.data"
     else
         print_warning "Failed to export LiteSpeed Cache configuration"
@@ -122,8 +157,12 @@ handle_litespeed_cache() {
 flush_all_caches() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
+    local WPCLIFLAGS WPCLIFLAGS_LS WPCLIFLAGS_REDIS
 
     cd "$wp_path" || return 1
+
+    # Generate flags for this site
+    WPCLIFLAGS=$(get_wpcli_flags)
 
     # Flush WordPress Object Cache
     print_info "Flushing WordPress object cache..."
@@ -136,8 +175,10 @@ flush_all_caches() {
     # Flush Redis Cache (if installed and active)
     if wp plugin is-installed redis-cache $WPCLIFLAGS 2>/dev/null; then
         if wp plugin is-active redis-cache $WPCLIFLAGS 2>/dev/null; then
+            # Generate Redis-specific flags (keeps only redis-cache active)
+            WPCLIFLAGS_REDIS=$(get_wpcli_flags_redis)
             print_info "Flushing Redis cache..."
-            if wp redis flush $WPCLIFLAGS 2>/dev/null; then
+            if wp redis flush $WPCLIFLAGS_REDIS 2>/dev/null; then
                 print_ok "Redis cache flushed"
             else
                 print_warning "Failed to flush Redis cache"
@@ -149,9 +190,12 @@ flush_all_caches() {
         print_info "Redis Cache plugin not installed, skipping"
     fi
 
+    # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
+    WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
+
     # Flush LiteSpeed Page Cache
     print_info "Flushing LiteSpeed page cache..."
-    if wp litespeed-purge all $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-purge all $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed page cache flushed"
     else
         print_warning "Failed to flush LiteSpeed page cache"
@@ -161,11 +205,15 @@ flush_all_caches() {
 disable_litespeed_cache() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
+    local WPCLIFLAGS_LS
 
     cd "$wp_path" || return 1
 
+    # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
+    WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
+
     print_info "Disabling LiteSpeed Cache..."
-    if wp litespeed-option set cache 0 $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-option set cache 0 $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed Cache disabled"
     else
         print_warning "Failed to disable LiteSpeed Cache"
@@ -209,6 +257,7 @@ clean_htaccess() {
 restore_litespeed_config() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
+    local WPCLIFLAGS_LS
 
     cd "$wp_path" || {
         print_error "Failed to access WordPress directory for user: $user"
@@ -221,9 +270,12 @@ restore_litespeed_config() {
         return 0
     fi
 
+    # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
+    WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
+
     # Import LiteSpeed Cache configuration
     print_info "Importing LiteSpeed Cache configuration..."
-    if wp litespeed-option import lsconf-premig.data $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-option import lsconf-premig.data $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed Cache configuration imported"
     else
         print_warning "Failed to import LiteSpeed Cache configuration"
@@ -231,7 +283,7 @@ restore_litespeed_config() {
 
     # Disable cache for logged-in users
     print_info "Disabling cache for logged-in users..."
-    if wp litespeed-option set cache-priv false $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-option set cache-priv false $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "Cache disabled for logged-in users"
     else
         print_warning "Failed to disable cache for logged-in users"
@@ -245,11 +297,15 @@ restore_litespeed_config() {
 regenerate_litespeed_rules() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
+    local WPCLIFLAGS_LS
 
     cd "$wp_path" || return 1
 
+    # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
+    WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
+
     print_info "Regenerating LiteSpeed Cache rules..."
-    if wp litespeed-purge all $WPCLIFLAGS 2>/dev/null; then
+    if wp litespeed-purge all $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed Cache rules regenerated"
     else
         print_warning "Failed to regenerate LiteSpeed Cache rules"
