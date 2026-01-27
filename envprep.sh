@@ -313,11 +313,19 @@ regenerate_litespeed_rules() {
 }
 
 restart_openlitespeed() {
-    print_info "Restarting OpenLiteSpeed..."
-    if systemctl restart lsws 2>/dev/null; then
+    print_info "Stopping OpenLiteSpeed..."
+    if ! systemctl stop lsws 2>/dev/null; then
+        print_warning "Failed to stop OpenLiteSpeed"
+    fi
+
+    print_info "Terminating lingering lsphp processes..."
+    pkill -9 lsphp 2>/dev/null || true
+
+    print_info "Starting OpenLiteSpeed..."
+    if systemctl start lsws 2>/dev/null; then
         print_ok "OpenLiteSpeed restarted successfully"
     else
-        print_error "Failed to restart OpenLiteSpeed"
+        print_error "Failed to start OpenLiteSpeed"
         return 1
     fi
 }
