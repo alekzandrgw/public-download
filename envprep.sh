@@ -274,11 +274,13 @@ restore_litespeed_config() {
     WPCLIFLAGS_LS=$(get_wpcli_flags_ls)
 
     # Import LiteSpeed Cache configuration
+    local import_success=false
     print_info "Importing LiteSpeed Cache configuration..."
     if wp litespeed-option import lsconf-premig.data $WPCLIFLAGS_LS 2>/dev/null; then
         print_ok "LiteSpeed Cache configuration imported"
+        import_success=true
     else
-        print_warning "Failed to import LiteSpeed Cache configuration"
+        print_warning "Failed to import LiteSpeed Cache configuration - manual intervention required"
     fi
 
     # Disable cache for logged-in users
@@ -289,9 +291,13 @@ restore_litespeed_config() {
         print_warning "Failed to disable cache for logged-in users"
     fi
 
-    # Delete the export file after successful import
-    print_info "Removing LiteSpeed configuration export file..."
-    rm -f "lsconf-premig.data" && print_ok "lsconf-premig.data deleted"
+    # Delete the export file only after successful import
+    if [ "$import_success" = true ]; then
+        print_info "Removing LiteSpeed configuration export file..."
+        rm -f "lsconf-premig.data" && print_ok "lsconf-premig.data deleted"
+    else
+        print_warning "Keeping lsconf-premig.data for manual intervention"
+    fi
 }
 
 regenerate_litespeed_rules() {
