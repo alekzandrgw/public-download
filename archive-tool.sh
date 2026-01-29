@@ -8,10 +8,10 @@ SOURCE_DIR="/home"
 OUTPUT_FILE="/tmp/home_backup.tar.gz"
 
 EXCLUDES=(
-    "*/web/www/*/public/wp-content/cache"
-    "*/web/www/*/public/wp-content/uploads/bb-platform-previews"
-    "litespeed"
-    "jelastic"
+    "*/wp-content/cache"
+    "*/bb-platform-previews"
+    "./litespeed"
+    "./jelastic"
     "*/.lscache"
 )
 
@@ -23,14 +23,14 @@ done
 
 # Count files
 echo "  Counting files..."
-FILE_COUNT=$(find "$SOURCE_DIR" "${FIND_EXCLUDES[@]}" -type f -print | wc -l)
+FILE_COUNT=$(cd "$SOURCE_DIR" && find . "${FIND_EXCLUDES[@]}" -type f -print | wc -l)
 echo "  Found $FILE_COUNT files"
 echo ""
 
 # Create archive with progress
 echo "  Archiving..."
-find "$SOURCE_DIR" "${FIND_EXCLUDES[@]}" -type f -print0 \
-    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>&1 \
+(cd "$SOURCE_DIR" && find . "${FIND_EXCLUDES[@]}" -type f -print0 \
+    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>&1) \
     | awk -v total="$FILE_COUNT" '
         /^tar:/ { next }
         {
