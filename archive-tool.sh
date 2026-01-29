@@ -15,10 +15,6 @@ EXCLUDES=(
     "*/.lscache"
 )
 
-echo ""
-echo "  Home Directory Archive"
-echo ""
-
 # Build exclusion args for find
 FIND_EXCLUDES=()
 for pattern in "${EXCLUDES[@]}"; do
