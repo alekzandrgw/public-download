@@ -19,12 +19,6 @@ echo ""
 echo "  Home Directory Archive"
 echo ""
 
-# Ensure pv is available
-if ! command -v pv &> /dev/null; then
-    echo "  Installing pv..."
-    yum install pv -y -q || { echo "  Failed to install pv."; exit 1; }
-fi
-
 # Build exclusion args for find
 FIND_EXCLUDES=()
 for pattern in "${EXCLUDES[@]}"; do
@@ -37,11 +31,18 @@ FILE_COUNT=$(find "$SOURCE_DIR" "${FIND_EXCLUDES[@]}" -type f -print | wc -l)
 echo "  Found $FILE_COUNT files"
 echo ""
 
-# Create archive with progress bar
+# Create archive with progress
 echo "  Archiving..."
 find "$SOURCE_DIR" "${FIND_EXCLUDES[@]}" -type f -print0 \
-    | pv -l -s "$FILE_COUNT" -p -t -e -N "  Progress" \
-    | tar -czf "$OUTPUT_FILE" --null -T -
+    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>&1 \
+    | awk -v total="$FILE_COUNT" '
+        /^tar:/ { next }
+        {
+            count++
+            if (count % 50 == 0 || count == total)
+                printf "\r  %d / %d - %d%%", count, total, int(count * 100 / total)
+        }
+        END { printf "\r  %d / %d - 100%%\n", total, total }'
 
 ARCHIVE_SIZE=$(ls -lh "$OUTPUT_FILE" | awk '{print $5}')
 
