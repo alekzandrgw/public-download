@@ -11,26 +11,24 @@ required=$((used * 2))
 additional=$((required - free))
 final=$((total + (additional > 0 ? additional : 0)))
 
-B="\033[1m" D="\033[2m" R="\033[0m" Y="\033[33m"
-
 echo ""
-echo -e "${B}  Disk Space Calculator${R}  ${D}($MOUNT)${R}"
-echo -e "  ${D}──────────────────────────────${R}"
+echo "  Disk Space Calculator  ($MOUNT)"
+echo "  ──────────────────────────────"
 echo ""
-echo -e "  ${D}Current${R}"
-echo -e "    Total        ${B}${total} GB${R}"
-echo -e "    Used         ${B}${used} GB${R}"
-echo -e "    Free         ${B}${free} GB${R}"
+echo "  Current"
+echo "    Total        ${total} GB"
+echo "    Used         ${used} GB"
+echo "    Free         ${free} GB"
 echo ""
-echo -e "  ${D}Migration requirement${R}"
-echo -e "    Required     ${B}${required} GB${R}  ${D}(${used} × 2)${R}"
+echo "  Migration requirement"
+echo "    Required     ${required} GB  (${used} × 2)"
 
 if [ "$additional" -le 0 ]; then
-  echo -e "    Additional   ${B}0 GB${R}  ${D}(sufficient space)${R}"
-  echo -e "    Final disk   ${Y}${total} GB${R}  ${D}(no changes needed)${R}"
+  echo "    Additional   0 GB  (sufficient space)"
+  echo "    Final disk   ${total} GB  (no changes needed)"
 else
-  echo -e "    Additional   ${B}${additional} GB${R}  ${D}(${required} - ${free})${R}"
-  echo -e "    Final disk   ${Y}${final} GB${R}  ${D}(${total} + ${additional})${R}"
+  echo "    Additional   ${additional} GB  (${required} - ${free})"
+  echo "    Final disk   ${final} GB  (${total} + ${additional})"
 fi
 
 echo ""
