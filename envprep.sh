@@ -49,11 +49,6 @@ get_wpcli_flags_ls() {
     echo "$WPCLIFLAGS_BASE $(get_skip_plugins_except 'litespeed-cache')"
 }
 
-# Get WP CLI flags for Redis commands (keeps only redis-cache active)
-get_wpcli_flags_redis() {
-    echo "$WPCLIFLAGS_BASE $(get_skip_plugins_except 'redis-cache')"
-}
-
 # Get WP CLI flags for general commands (skips all plugins)
 get_wpcli_flags() {
     echo "$WPCLIFLAGS_BASE --skip-plugins"
@@ -120,6 +115,9 @@ handle_litespeed_cache() {
     # Generate flags for this site
     WPCLIFLAGS=$(get_wpcli_flags)
 
+    # Ensure FS_METHOD is set for plugin operations
+    wp config set FS_METHOD direct $WPCLIFLAGS 2>/dev/null
+
     # Check if LiteSpeed Cache is installed
     if ! wp plugin is-installed litespeed-cache $WPCLIFLAGS 2>/dev/null; then
         print_info "LiteSpeed Cache not installed, installing..."
@@ -157,7 +155,7 @@ handle_litespeed_cache() {
 flush_all_caches() {
     local user="$1"
     local wp_path="/home/${user}/web/www/app/public"
-    local WPCLIFLAGS WPCLIFLAGS_LS WPCLIFLAGS_REDIS
+    local WPCLIFLAGS WPCLIFLAGS_LS
 
     cd "$wp_path" || return 1
 
@@ -170,24 +168,6 @@ flush_all_caches() {
         print_ok "WordPress object cache flushed"
     else
         print_warning "Failed to flush WordPress object cache"
-    fi
-
-    # Flush Redis Cache (if installed and active)
-    if wp plugin is-installed redis-cache $WPCLIFLAGS 2>/dev/null; then
-        if wp plugin is-active redis-cache $WPCLIFLAGS 2>/dev/null; then
-            # Generate Redis-specific flags (keeps only redis-cache active)
-            WPCLIFLAGS_REDIS=$(get_wpcli_flags_redis)
-            print_info "Flushing Redis cache..."
-            if wp redis flush $WPCLIFLAGS_REDIS 2>/dev/null; then
-                print_ok "Redis cache flushed"
-            else
-                print_warning "Failed to flush Redis cache"
-            fi
-        else
-            print_info "Redis Cache plugin installed but not active, skipping"
-        fi
-    else
-        print_info "Redis Cache plugin not installed, skipping"
     fi
 
     # Generate LiteSpeed-specific flags (keeps only litespeed-cache active)
