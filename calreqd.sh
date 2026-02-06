@@ -7,9 +7,10 @@ MOUNT="${1:-/}"
 
 read -r total used free <<< "$(df -BG --output=size,used,avail "$MOUNT" | tail -1 | sed 's/G//g')"
 
-required=$((used * 2))
-additional=$((required - free))
-final=$((total + (additional > 0 ? additional : 0)))
+required_free=$((used * 2))
+additional=$((required_free - free))
+additional=$((additional > 0 ? additional : 0))
+final=$((total + additional))
 
 echo ""
 echo "  Disk Space Calculator  ($MOUNT)"
@@ -21,14 +22,14 @@ echo "    Used         ${used} GB"
 echo "    Free         ${free} GB"
 echo ""
 echo "  Migration requirement"
-echo "    Required     ${required} GB  (${used} × 2)"
+echo "    Required free  ${required_free} GB  (${used} × 2)"
 
-if [ "$additional" -le 0 ]; then
-  echo "    Additional   0 GB  (sufficient space)"
-  echo "    Final disk   ${total} GB  (no changes needed)"
+if [ "$additional" -eq 0 ]; then
+  echo "    Additional     0 GB  (sufficient free space)"
+  echo "    Final disk     ${total} GB  (no changes needed)"
 else
-  echo "    Additional   ${additional} GB  (${required} - ${free})"
-  echo "    Final disk   ${final} GB  (${total} + ${additional})"
+  echo "    Additional     ${additional} GB  (${required_free} − ${free} shortfall)"
+  echo "    Final disk     ${final} GB  (${total} + ${additional})"
 fi
 
 echo ""
