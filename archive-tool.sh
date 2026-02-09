@@ -29,19 +29,44 @@ echo ""
 
 # Create archive with progress
 echo "  Archiving..."
+TAR_ERR="/tmp/wp-archive-tar.err"
+: > "$TAR_ERR"
+
+set +eo pipefail
 (cd "$SOURCE_DIR" && find . "${FIND_EXCLUDES[@]}" -type f -print0 \
-    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>&1) \
+    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>"$TAR_ERR") \
     | awk -v total="$FILE_COUNT" '
-        /^tar:/ { next }
         {
             count++
             if (count % 50 == 0 || count == total)
                 printf "\r  %d / %d - %d%%", count, total, int(count * 100 / total)
         }
         END { printf "\r  %d / %d - 100%%\n", total, total }'
+TAR_EXIT=${PIPESTATUS[0]}
+set -eo pipefail
+
+echo ""
+
+# Check for errors
+if [[ $TAR_EXIT -ne 0 ]] || [[ ! -s "$OUTPUT_FILE" ]]; then
+    echo "  [ERROR] Archive creation failed (exit code: $TAR_EXIT)" >&2
+    if [[ -s "$TAR_ERR" ]]; then
+        echo "  [ERROR] tar output:" >&2
+        sed 's/^/    /' "$TAR_ERR" >&2
+    fi
+    rm -f "$TAR_ERR"
+    exit 1
+fi
+
+# Show non-fatal warnings if any
+if [[ -s "$TAR_ERR" ]]; then
+    echo "  [WARNING] Non-fatal errors during archive creation:"
+    sed 's/^/    /' "$TAR_ERR"
+    echo ""
+fi
+rm -f "$TAR_ERR"
 
 ARCHIVE_SIZE=$(ls -lh "$OUTPUT_FILE" | awk '{print $5}')
 
-echo ""
 echo "  Done! Archive: $OUTPUT_FILE ($ARCHIVE_SIZE)"
 echo ""
