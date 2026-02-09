@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# fix-definer — Fix DEFINER-related permission issues in MySQL/MariaDB .sql dump files.
+#
+# Replaces explicit DEFINER=`user`@`host` with DEFINER=CURRENT_USER and
+# SQL SECURITY DEFINER with SQL SECURITY INVOKER so that imports no longer
+# require SUPER or SET USER privileges.
+
+set -euo pipefail
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+die() {
+    printf '%s\n' "ERROR: $*" >&2
+    exit 1
+}
+
+info() {
+    printf '%s\n' ">> $*"
+}
+
+# Return the next available filename using an incrementing numeric prefix.
+# Usage: next_available "fixed.dump.sql" → "2.fixed.dump.sql" (or 3., 4., …)
+next_available() {
+    local base="$1"
+    local n=2
+    while [[ -e "${n}.${base}" ]]; do
+        (( n++ ))
+    done
+    printf '%s' "${n}.${base}"
+}
+
+# Prompt the user when an output file already exists.
+# Sets the variable named by $2 to the resolved filename.
+# Usage: handle_conflict "fixed.dump.sql" result_var
+handle_conflict() {
+    local proposed="$1"
+    local -n _out="$2"
+
+    if [[ ! -e "$proposed" ]]; then
+        _out="$proposed"
+        return
+    fi
+
+    while true; do
+        printf '\nFile "%s" already exists.\n' "$proposed"
+        printf '  [R] Replace\n'
+        printf '  [N] Rename (auto-increment)\n'
+        printf '  [A] Abort\n'
+        read -rp 'Choice [R/N/A]: ' choice
+
+        case "${choice^^}" in
+            R)
+                _out="$proposed"
+                return
+                ;;
+            N)
+                _out="$(next_available "$proposed")"
+                info "Will use: ${_out}"
+                return
+                ;;
+            A)
+                die "Aborted by user."
+                ;;
+            *)
+                printf 'Invalid choice. Please enter R, N, or A.\n'
+                ;;
+        esac
+    done
+}
+
+# ── File discovery ───────────────────────────────────────────────────────
+
+mapfile -t sql_files < <(find . -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort)
+
+if [[ ${#sql_files[@]} -eq 0 ]]; then
+    die "No .sql files found in the current directory."
+fi
+
+# ── Interactive selection ────────────────────────────────────────────────
+
+printf '\nAvailable .sql files:\n\n'
+for i in "${!sql_files[@]}"; do
+    printf '  [%d] %s\n' "$(( i + 1 ))" "${sql_files[$i]}"
+done
+printf '\n'
+
+while true; do
+    read -rp "Select a file by number (1-${#sql_files[@]}): " selection
+
+    # Must be a positive integer
+    if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
+        printf 'Please enter a number between 1 and %d.\n' "${#sql_files[@]}"
+        continue
+    fi
+
+    if (( selection < 1 || selection > ${#sql_files[@]} )); then
+        printf 'Out of range. Please enter a number between 1 and %d.\n' "${#sql_files[@]}"
+        continue
+    fi
+
+    break
+done
+
+input_file="${sql_files[$(( selection - 1 ))]}"
+info "Selected: ${input_file}"
+
+# ── Output file names ───────────────────────────────────────────────────
+
+original_name="original.${input_file}"
+fixed_name="fixed.${input_file}"
+
+handle_conflict "$original_name" original_name
+handle_conflict "$fixed_name"    fixed_name
+
+# ── Create unmodified copy ───────────────────────────────────────────────
+
+info "Creating unmodified backup: ${original_name}"
+cp -- "$input_file" "$original_name"
+
+# ── Create fixed copy ───────────────────────────────────────────────────
+
+info "Creating fixed file: ${fixed_name}"
+sed -E \
+    -e 's/DEFINER=`[^`]+`@`[^`]+`/DEFINER=CURRENT_USER/g' \
+    -e 's/SQL SECURITY DEFINER/SQL SECURITY INVOKER/g' \
+    "$input_file" > "$fixed_name"
+
+# ── Summary ──────────────────────────────────────────────────────────────
+
+printf '\n'
+info "Done."
+printf '\n'
+printf '  Source file : %s\n' "$input_file"
+printf '  Backup copy : %s\n' "$original_name"
+printf '  Fixed file  : %s\n' "$fixed_name"
+printf '\n'
