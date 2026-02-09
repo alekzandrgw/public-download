@@ -46,7 +46,7 @@ handle_conflict() {
         printf '  [R] Replace\n'
         printf '  [N] Rename (auto-increment)\n'
         printf '  [A] Abort\n'
-        read -rp 'Choice [R/N/A]: ' choice
+        read -rp 'Choice [R/N/A]: ' choice </dev/tty
 
         case "${choice^^}" in
             R)
@@ -85,7 +85,7 @@ done
 printf '\n'
 
 while true; do
-    read -rp "Select a file by number (1-${#sql_files[@]}): " selection
+    read -rp "Select a file by number (1-${#sql_files[@]}): " selection </dev/tty
 
     # Must be a positive integer
     if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
