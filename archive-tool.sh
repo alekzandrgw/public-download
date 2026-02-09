@@ -13,6 +13,7 @@ EXCLUDES=(
     "./litespeed"
     "./jelastic"
     "*/.lscache"
+    "*.log"
 )
 
 # Build exclusion args for find
@@ -34,7 +35,7 @@ TAR_ERR="/tmp/wp-archive-tar.err"
 
 set +eo pipefail
 (cd "$SOURCE_DIR" && find . "${FIND_EXCLUDES[@]}" -type f -print0 \
-    | tar -czf "$OUTPUT_FILE" --null -T - -v 2>"$TAR_ERR") \
+    | tar -czf "$OUTPUT_FILE" --null -T - --warning=no-file-changed -v 2>"$TAR_ERR") \
     | awk -v total="$FILE_COUNT" '
         {
             count++
