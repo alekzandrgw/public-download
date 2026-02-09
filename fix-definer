@@ -112,25 +112,24 @@ fixed_name="fixed.${input_file}"
 handle_conflict "$original_name" original_name
 handle_conflict "$fixed_name"    fixed_name
 
-# ── Create unmodified copy ───────────────────────────────────────────────
+# ── Rename original as backup ────────────────────────────────────────────
 
-info "Creating unmodified backup: ${original_name}"
-cp -- "$input_file" "$original_name"
+info "Renaming original to backup: ${original_name}"
+mv -- "$input_file" "$original_name"
 
-# ── Create fixed copy ───────────────────────────────────────────────────
+# ── Create fixed file ───────────────────────────────────────────────────
 
 info "Creating fixed file: ${fixed_name}"
 sed -E \
     -e 's/DEFINER=`[^`]+`@`[^`]+`/DEFINER=CURRENT_USER/g' \
     -e 's/SQL SECURITY DEFINER/SQL SECURITY INVOKER/g' \
-    "$input_file" > "$fixed_name"
+    "$original_name" > "$fixed_name"
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
 printf '\n'
 info "Done."
 printf '\n'
-printf '  Source file : %s\n' "$input_file"
-printf '  Backup copy : %s\n' "$original_name"
-printf '  Fixed file  : %s\n' "$fixed_name"
+printf '  Backup (original) : %s\n' "$original_name"
+printf '  Fixed file        : %s\n' "$fixed_name"
 printf '\n'
