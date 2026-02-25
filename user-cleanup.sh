@@ -27,7 +27,7 @@ REDIRECT="2>/dev/null"
 # ---------------------------------------------------------------------------
 # 0. Verify dependencies
 # ---------------------------------------------------------------------------
-for cmd in rapyd wp jq sudo; do
+for cmd in rapyd wp jq; do
     if ! command -v "$cmd" &>/dev/null; then
         err "Required command not found: $cmd"
         exit 1
@@ -98,12 +98,8 @@ while IFS= read -r SITE; do
     # Retrieve all users with their login/email in tabular form
     # (wp user list outputs: ID, user_login, user_email, ...)
     WP_ERR_FILE=$(mktemp)
-    USER_LIST=$(sudo -u "$SITE_USER" -- \
-        wp user list \
-            --path="$WEBROOT" \
-            $WP_FLAGS \
-            --fields=ID,user_email \
-            --format=csv \
+    USER_LIST=$(su - "$SITE_USER" -c \
+        "wp user list --path='$WEBROOT' $WP_FLAGS --fields=ID,user_email --format=csv" \
         2>"$WP_ERR_FILE") || {
         WP_ERR=$(cat "$WP_ERR_FILE")
         rm -f "$WP_ERR_FILE"
@@ -134,11 +130,8 @@ while IFS= read -r SITE; do
 
     for UID in "${MATCHED_IDS[@]}"; do
         log "  Deleting user ID $UID from site '$SLUG'..."
-        DELETE_OUTPUT=$(sudo -u "$SITE_USER" -- \
-            wp user delete "$UID" \
-                --path="$WEBROOT" \
-                $WP_FLAGS \
-                --yes \
+        DELETE_OUTPUT=$(su - "$SITE_USER" -c \
+            "wp user delete '$UID' --path='$WEBROOT' $WP_FLAGS --yes" \
             2>&1) && {
             log "  Deleted user ID $UID successfully."
             ((TOTAL_DELETED++)) || true
