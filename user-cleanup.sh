@@ -79,12 +79,7 @@ while IFS= read -r SITE; do
         continue
     fi
 
-    # Validate site user exists on the system
-    if ! id "$SITE_USER" &>/dev/null; then
-        warn "System user '$SITE_USER' does not exist for site '$SLUG'. Skipping."
-        ((TOTAL_ERRORS++)) || true
-        continue
-    fi
+    # (no user-switch needed — running as root with --allow-root)
 
     # ------------------------------------------------------------------
     # 2a. Search for matching users
@@ -98,8 +93,12 @@ while IFS= read -r SITE; do
     # Retrieve all users with their login/email in tabular form
     # (wp user list outputs: ID, user_login, user_email, ...)
     WP_ERR_FILE=$(mktemp)
-    USER_LIST=$(su - "$SITE_USER" -c \
-        "wp user list --path='$WEBROOT' $WP_FLAGS --fields=ID,user_email --format=csv" \
+    USER_LIST=$(wp user list \
+        --path="$WEBROOT" \
+        $WP_FLAGS \
+        --fields=ID,user_email \
+        --format=csv \
+        --allow-root \
         2>"$WP_ERR_FILE") || {
         WP_ERR=$(cat "$WP_ERR_FILE")
         rm -f "$WP_ERR_FILE"
@@ -130,8 +129,11 @@ while IFS= read -r SITE; do
 
     for UID in "${MATCHED_IDS[@]}"; do
         log "  Deleting user ID $UID from site '$SLUG'..."
-        DELETE_OUTPUT=$(su - "$SITE_USER" -c \
-            "wp user delete '$UID' --path='$WEBROOT' $WP_FLAGS --yes" \
+        DELETE_OUTPUT=$(wp user delete "$UID" \
+            --path="$WEBROOT" \
+            $WP_FLAGS \
+            --yes \
+            --allow-root \
             2>&1) && {
             log "  Deleted user ID $UID successfully."
             ((TOTAL_DELETED++)) || true
