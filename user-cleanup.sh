@@ -109,12 +109,12 @@ while IFS= read -r SITE; do
     rm -f "$WP_ERR_FILE"
 
     # Walk through each line (skip CSV header)
-    while IFS=',' read -r UID EMAIL; do
-        [[ "$UID" == "ID" ]] && continue          # skip header
+    while IFS=',' read -r WP_UID EMAIL; do
+        [[ "$WP_UID" == "ID" ]] && continue          # skip header
         EMAIL=$(echo "$EMAIL" | tr -d '"')         # strip any quotes
         if echo "$EMAIL" | grep -qiP "$EMAIL_PATTERN"; then
-            log "  Found matching user: ID=$UID  email=$EMAIL"
-            MATCHED_IDS+=("$UID")
+            log "  Found matching user: ID=$WP_UID  email=$EMAIL"
+            MATCHED_IDS+=("$WP_UID")
         fi
     done <<< "$USER_LIST"
 
@@ -127,18 +127,18 @@ while IFS= read -r SITE; do
         continue
     fi
 
-    for UID in "${MATCHED_IDS[@]}"; do
-        log "  Deleting user ID $UID from site '$SLUG'..."
-        DELETE_OUTPUT=$(wp user delete "$UID" \
+    for WP_UID in "${MATCHED_IDS[@]}"; do
+        log "  Deleting user ID $WP_UID from site '$SLUG'..."
+        DELETE_OUTPUT=$(wp user delete "$WP_UID" \
             --path="$WEBROOT" \
             $WP_FLAGS \
             --yes \
             --allow-root \
             2>&1) && {
-            log "  Deleted user ID $UID successfully."
+            log "  Deleted user ID $WP_UID successfully."
             ((TOTAL_DELETED++)) || true
         } || {
-            err "  Failed to delete user ID $UID from '$SLUG': $DELETE_OUTPUT"
+            err "  Failed to delete user ID $WP_UID from '$SLUG': $DELETE_OUTPUT"
             ((TOTAL_ERRORS++)) || true
         }
     done
