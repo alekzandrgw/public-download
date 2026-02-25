@@ -97,18 +97,21 @@ while IFS= read -r SITE; do
 
     # Retrieve all users with their login/email in tabular form
     # (wp user list outputs: ID, user_login, user_email, ...)
+    WP_ERR_FILE=$(mktemp)
     USER_LIST=$(sudo -u "$SITE_USER" -- \
         wp user list \
             --path="$WEBROOT" \
             $WP_FLAGS \
             --fields=ID,user_email \
             --format=csv \
-            --allow-root \
-        2>/dev/null) || {
-        warn "Failed to list users for site '$SLUG'. Skipping."
+        2>"$WP_ERR_FILE") || {
+        WP_ERR=$(cat "$WP_ERR_FILE")
+        rm -f "$WP_ERR_FILE"
+        warn "Failed to list users for site '$SLUG'. Skipping. WP-CLI output: $WP_ERR"
         ((TOTAL_ERRORS++)) || true
         continue
     }
+    rm -f "$WP_ERR_FILE"
 
     # Walk through each line (skip CSV header)
     while IFS=',' read -r UID EMAIL; do
@@ -136,7 +139,6 @@ while IFS= read -r SITE; do
                 --path="$WEBROOT" \
                 $WP_FLAGS \
                 --yes \
-                --allow-root \
             2>&1) && {
             log "  Deleted user ID $UID successfully."
             ((TOTAL_DELETED++)) || true
