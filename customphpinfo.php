@@ -144,7 +144,7 @@ $wp_extensions = [
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SRV // PHP DIAGNOSTIC SYSTEM</title>
+<title>PHP Diagnostic</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -165,7 +165,7 @@ $wp_extensions = [
     --red-hi:    #e04848;
     --blue:      #2878a8;
     --blue-hi:   #40a0d8;
-    --muted:     #3a3428;
+    --muted:     #e8d0a0;
     --mono:      'Share Tech Mono', monospace;
     --cond:      'Barlow Condensed', sans-serif;
   }
@@ -256,7 +256,7 @@ $wp_extensions = [
   }
 
   .logo-sub {
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: .18em;
     text-transform: uppercase;
     color: var(--muted);
@@ -298,7 +298,7 @@ $wp_extensions = [
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
   .meta {
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: .08em;
     color: var(--muted);
   }
@@ -312,7 +312,7 @@ $wp_extensions = [
     gap: 10px;
     margin: 30px 0 12px;
     font-family: var(--cond);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: .22em;
     text-transform: uppercase;
@@ -321,7 +321,7 @@ $wp_extensions = [
 
   .section-title::before {
     content: '▸';
-    font-size: 9px;
+    font-size: 12px;
     opacity: .7;
   }
 
@@ -374,7 +374,7 @@ $wp_extensions = [
 
   .card-label {
     font-family: var(--cond);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: .20em;
     text-transform: uppercase;
@@ -441,7 +441,7 @@ $wp_extensions = [
     display: flex;
     justify-content: space-between;
     margin-top: 5px;
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: .06em;
     color: var(--muted);
   }
@@ -464,12 +464,8 @@ $wp_extensions = [
 
   .two-col {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 12px;
-  }
-
-  @media (max-width: 640px) {
-    .two-col, .restart-grid { grid-template-columns: 1fr; }
   }
 
   /* ══════════════════════════════════
@@ -502,7 +498,7 @@ $wp_extensions = [
   .stat-table td {
     padding: 8px 4px;
     vertical-align: middle;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .stat-table td:first-child { color: var(--muted); }
@@ -518,7 +514,7 @@ $wp_extensions = [
     gap: 12px;
     padding: 8px 0;
     border-bottom: 1px solid var(--border);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .kv-row:last-child { border-bottom: none; }
@@ -540,7 +536,7 @@ $wp_extensions = [
   .limit-row:last-child { border-bottom: none; }
 
   .limit-left { display: flex; flex-direction: column; gap: 2px; }
-  .limit-key  { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+  .limit-key  { color: var(--muted); font-size: 12px; letter-spacing: .06em; }
   .limit-val  { color: var(--text-hi); font-size: 12px; }
   .limit-right { flex-shrink: 0; }
 
@@ -550,7 +546,7 @@ $wp_extensions = [
   .tag {
     display: inline-block;
     font-family: var(--cond);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: .16em;
     text-transform: uppercase;
@@ -570,7 +566,7 @@ $wp_extensions = [
   ══════════════════════════════════ */
   .dir-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 8px;
   }
 
@@ -586,8 +582,8 @@ $wp_extensions = [
   }
 
   .dir-item:hover { border-color: var(--border-hi); }
-  .dir-key { color: var(--muted); font-size: 10px; word-break: break-all; }
-  .dir-val { color: var(--amber-hi); font-size: 11px; white-space: nowrap; }
+  .dir-key { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .dir-val { color: var(--amber-hi); font-size: 12px; white-space: nowrap; }
 
   /* ══════════════════════════════════
      EXTENSION GRID
@@ -612,9 +608,9 @@ $wp_extensions = [
   .ext-item:hover { border-color: var(--border-hi); }
   .ext-item.missing { border-color: rgba(224,72,72,.25); background: rgba(184,48,48,.03); }
   .ext-left { display: flex; flex-direction: column; gap: 2px; }
-  .ext-name { font-size: 11px; color: var(--text-hi); }
+  .ext-name { font-size: 12px; color: var(--text-hi); }
   .ext-item.missing .ext-name { color: var(--red-hi); }
-  .ext-note { font-size: 9px; color: var(--muted); letter-spacing: .04em; }
+  .ext-note { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
 
   /* ══════════════════════════════════
      DISABLED NOTICE
@@ -637,7 +633,7 @@ $wp_extensions = [
     padding-top: 18px;
     border-top: 1px solid var(--border);
     color: var(--muted);
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: .08em;
     display: flex;
     justify-content: space-between;
@@ -648,7 +644,7 @@ $wp_extensions = [
   /* ══════════════════════════════════
      PILL alias (keep compat)
   ══════════════════════════════════ */
-  .pill       { display:inline-block; font-family:var(--cond); font-size:9px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; padding:2px 8px; border:1px solid; clip-path:polygon(4px 0%,100% 0%,calc(100% - 4px) 100%,0% 100%); }
+  .pill       { display:inline-block; font-family:var(--cond); font-size:12px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; padding:2px 8px; border:1px solid; clip-path:polygon(4px 0%,100% 0%,calc(100% - 4px) 100%,0% 100%); }
   .pill-ok    { color:var(--green-hi); border-color:rgba(77,200,120,.35);  background:rgba(60,160,96,.08); }
   .pill-miss  { color:var(--red-hi);   border-color:rgba(224,72,72,.35);   background:rgba(184,48,48,.08); }
   .pill-warn  { color:var(--amber-hi); border-color:rgba(240,176,48,.35);  background:rgba(212,148,10,.08); }
@@ -675,7 +671,7 @@ $wp_extensions = [
   /* sub-label inside section for optional/required groups */
   .sub-label {
     font-family: var(--cond);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: .20em;
     text-transform: uppercase;
@@ -692,7 +688,7 @@ $wp_extensions = [
 
 <header>
   <div class="logo">
-    <div class="logo-main">PHP Diagnostic System</div>
+    <div class="logo-main">PHP Diagnostic</div>
     <div class="logo-sub">PHP <?= PHP_VERSION ?> &nbsp;·&nbsp; <?= php_uname('n') ?></div>
   </div>
   <div class="header-right">
@@ -928,7 +924,7 @@ $wp_extensions = [
       <span class="limit-val">
         <?= $isCount
               ? htmlspecialchars($display)
-              : htmlspecialchars($display) . ' <span style="color:var(--muted);font-size:10px;">(' . fmt_bytes($bytes) . ')</span>'
+              : htmlspecialchars($display) . ' <span style="color:var(--muted);font-size:12px;">(' . fmt_bytes($bytes) . ')</span>'
         ?>
       </span>
     </div>
@@ -991,7 +987,7 @@ $wp_extensions = [
   $optional = array_filter($wp_extensions, fn($e) => !$e[2]);
 ?>
 
-<p style="font-size:11px;color:var(--muted);margin-bottom:12px;">
+<p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
   <span class="pill pill-ok">Loaded</span>&nbsp; extension is present &nbsp;·&nbsp;
   <span class="pill pill-miss">Missing</span>&nbsp; extension not detected &nbsp;·&nbsp;
   <span class="pill pill-off">Optional</span>&nbsp; recommended but not required
@@ -1028,7 +1024,7 @@ $wp_extensions = [
 </div>
 
 <footer>
-  <span>OPcache + WordPress PHP Dashboard &nbsp;·&nbsp; Self-contained PHP script</span>
+  <span>PHP Diagnostic &nbsp;·&nbsp; Self-contained diagnostic script</span>
   <span>Generated at <?= date('H:i:s') ?></span>
 </footer>
 
