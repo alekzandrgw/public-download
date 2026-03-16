@@ -505,6 +505,70 @@ $wp_extensions = [
   .stat-table td:last-child  { color: var(--text-hi); text-align: right; }
 
   /* ══════════════════════════════════
+     KV-CARD GRID  (compact multi-col)
+  ══════════════════════════════════ */
+  .kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+  }
+
+  .kv-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color .2s;
+    position: relative;
+  }
+
+  .kv-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 2px;
+    background: linear-gradient(90deg, rgba(212,148,10,.25), transparent);
+  }
+
+  .kv-card:hover { border-color: var(--border-hi); }
+
+  .kv-card-key {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: .04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .kv-card-val {
+    font-size: 13px;
+    color: var(--text-hi);
+    word-break: break-all;
+    line-height: 1.3;
+  }
+
+  .kv-card-val.on   { color: var(--green-hi); }
+  .kv-card-val.off  { color: var(--red-hi); }
+  .kv-card-val.warn { color: var(--amber-hi); }
+
+  /* limit variant — also shows a status tag */
+  .kv-card-footer {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .kv-card-sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ══════════════════════════════════
      KV + LIMIT ROWS
   ══════════════════════════════════ */
   .kv-row {
@@ -779,42 +843,42 @@ $wp_extensions = [
 
 <!-- ── Statistics ── -->
 <div class="section-title">Statistics</div>
-<div class="table-card">
-  <table class="stat-table">
-    <?php
-      $stats = $status['opcache_statistics'] ?? [];
-      $rows = [
-        ['Start Time',          date('Y-m-d H:i:s', $stats['start_time']          ?? 0)],
-        ['Last Restart Time',   ($stats['last_restart_time'] ?? 0)
-                                  ? date('Y-m-d H:i:s', $stats['last_restart_time'])
-                                  : 'Never'],
-        ['Total Hits',          number_format($stats['hits']    ?? 0)],
-        ['Total Misses',        number_format($stats['misses']  ?? 0)],
-        ['Blacklist Misses',    number_format($stats['blacklist_misses'] ?? 0)],
-        ['Cached Scripts',      number_format($stats['num_cached_scripts'] ?? 0)],
-        ['Max Cached Keys',     number_format($stats['max_cached_keys']    ?? 0)],
-      ];
-    ?>
-    <?php foreach ($rows as [$k, $v]): ?>
-    <tr><td><?= htmlspecialchars($k) ?></td><td><?= htmlspecialchars($v) ?></td></tr>
-    <?php endforeach; ?>
-  </table>
+<?php
+  $stats = $status['opcache_statistics'] ?? [];
+  $statRows = [
+    ['Start Time',       date('Y-m-d H:i:s', $stats['start_time'] ?? 0), ''],
+    ['Last Restart',     ($stats['last_restart_time'] ?? 0) ? date('Y-m-d H:i:s', $stats['last_restart_time']) : 'Never', ''],
+    ['Total Hits',       number_format($stats['hits']   ?? 0), ''],
+    ['Total Misses',     number_format($stats['misses'] ?? 0), ''],
+    ['Blacklist Misses', number_format($stats['blacklist_misses'] ?? 0), ''],
+    ['Cached Scripts',   number_format($stats['num_cached_scripts'] ?? 0), ''],
+    ['Max Cached Keys',  number_format($stats['max_cached_keys']   ?? 0), ''],
+  ];
+?>
+<div class="kv-grid">
+  <?php foreach ($statRows as [$k, $v, $cls]): ?>
+  <div class="kv-card">
+    <span class="kv-card-key"><?= htmlspecialchars($k) ?></span>
+    <span class="kv-card-val <?= $cls ?>"><?= htmlspecialchars($v) ?></span>
+  </div>
+  <?php endforeach; ?>
 </div>
 
 <!-- ── Memory Detail ── -->
 <div class="section-title">Memory Detail</div>
-<div class="table-card">
-  <table class="stat-table">
-    <?php foreach ([
-      ['Used Memory',       fmt_bytes($mem_used)],
-      ['Free Memory',       fmt_bytes($mem_free)],
-      ['Wasted Memory',     fmt_bytes($mem_wasted)],
-      ['Wasted Percentage', pct($mem_wasted, $mem_total) . '%'],
-      ['Total',             fmt_bytes($mem_total)],
-    ] as [$k, $v]): ?>
-    <tr><td><?= $k ?></td><td><?= $v ?></td></tr>
-    <?php endforeach; ?>
-  </table>
+<div class="kv-grid">
+  <?php foreach ([
+    ['Used Memory',       fmt_bytes($mem_used),                          ''],
+    ['Free Memory',       fmt_bytes($mem_free),                          ''],
+    ['Wasted Memory',     fmt_bytes($mem_wasted),                        $mem_wasted > 0 ? 'warn' : ''],
+    ['Wasted %',          pct($mem_wasted, $mem_total) . '%',            ''],
+    ['Total Memory',      fmt_bytes($mem_total),                         ''],
+  ] as [$k, $v, $cls]): ?>
+  <div class="kv-card">
+    <span class="kv-card-key"><?= $k ?></span>
+    <span class="kv-card-val <?= $cls ?>"><?= $v ?></span>
+  </div>
+  <?php endforeach; ?>
 </div>
 
 <!-- ── Directives ── -->
@@ -880,28 +944,19 @@ $wp_extensions = [
 
 <!-- ── Resource Limits ── -->
 <div class="section-title">Resource Limits</div>
-<div class="table-card">
+<div class="kv-grid">
   <?php foreach ($res_limits as [$key, $display, $bytes, $minOk, $minGood]):
-    // For execution times the "bytes" are actually seconds
     $isTime = str_contains($key, 'time');
     $raw    = $isTime ? (int)$bytes : $bytes;
-
-    if ($raw === 0 || $raw === -1) { // unlimited
-      $pillClass = 'pill-warn'; $pillText = 'Unlimited';
-    } elseif ($raw < $minOk) {
-      $pillClass = 'pill-miss'; $pillText = 'Low';
-    } elseif ($raw < $minGood) {
-      $pillClass = 'pill-warn'; $pillText = 'OK';
-    } else {
-      $pillClass = 'pill-ok';   $pillText = 'Good';
-    }
+    if ($raw === 0 || $raw === -1) { $pillClass = 'pill-warn'; $pillText = 'Unlimited'; }
+    elseif ($raw < $minOk)         { $pillClass = 'pill-miss'; $pillText = 'Low'; }
+    elseif ($raw < $minGood)       { $pillClass = 'pill-warn'; $pillText = 'OK'; }
+    else                           { $pillClass = 'pill-ok';   $pillText = 'Good'; }
   ?>
-  <div class="limit-row">
-    <div class="limit-left">
-      <span class="limit-key"><?= htmlspecialchars($key) ?></span>
-      <span class="limit-val"><?= htmlspecialchars($display) ?></span>
-    </div>
-    <div class="limit-right">
+  <div class="kv-card">
+    <span class="kv-card-key"><?= htmlspecialchars($key) ?></span>
+    <span class="kv-card-val"><?= htmlspecialchars($display) ?></span>
+    <div class="kv-card-footer">
       <span class="pill <?= $pillClass ?>"><?= $pillText ?></span>
     </div>
   </div>
@@ -910,25 +965,19 @@ $wp_extensions = [
 
 <!-- ── Upload & Post ── -->
 <div class="section-title">Upload &amp; Post Limits</div>
-<div class="table-card">
+<div class="kv-grid">
   <?php foreach ($upload as [$key, $display, $bytes, $minOk, $minGood]):
     $isCount = $key === 'max_file_uploads';
     $raw = (int)$bytes;
-    if ($raw < $minOk)   { $pillClass = 'pill-miss'; $pillText = 'Low'; }
+    if ($raw < $minOk)       { $pillClass = 'pill-miss'; $pillText = 'Low'; }
     elseif ($raw < $minGood) { $pillClass = 'pill-warn'; $pillText = 'OK'; }
-    else                  { $pillClass = 'pill-ok';   $pillText = 'Good'; }
+    else                     { $pillClass = 'pill-ok';   $pillText = 'Good'; }
+    $valDisplay = $isCount ? htmlspecialchars($display) : htmlspecialchars($display) . ' <span style="color:var(--muted);font-size:12px;">(' . fmt_bytes($bytes) . ')</span>';
   ?>
-  <div class="limit-row">
-    <div class="limit-left">
-      <span class="limit-key"><?= htmlspecialchars($key) ?></span>
-      <span class="limit-val">
-        <?= $isCount
-              ? htmlspecialchars($display)
-              : htmlspecialchars($display) . ' <span style="color:var(--muted);font-size:12px;">(' . fmt_bytes($bytes) . ')</span>'
-        ?>
-      </span>
-    </div>
-    <div class="limit-right">
+  <div class="kv-card">
+    <span class="kv-card-key"><?= htmlspecialchars($key) ?></span>
+    <span class="kv-card-val"><?= $valDisplay ?></span>
+    <div class="kv-card-footer">
       <span class="pill <?= $pillClass ?>"><?= $pillText ?></span>
     </div>
   </div>
@@ -965,15 +1014,15 @@ $wp_extensions = [
 
 <!-- ── Miscellaneous ── -->
 <div class="section-title">Miscellaneous</div>
-<div class="table-card">
+<div class="kv-grid">
   <?php foreach ($misc_cfg as $k => $v):
     $cls = '';
-    if ($k === 'allow_url_include' && $v === 'On') $cls = 'off'; // bad
+    if ($k === 'allow_url_include' && $v === 'On') $cls = 'off';
     if ($k === 'date.timezone' && $v === '(not set)') $cls = 'warn';
   ?>
-  <div class="kv-row">
-    <span class="kv-key"><?= htmlspecialchars($k) ?></span>
-    <span class="kv-val <?= $cls ?>"><?= htmlspecialchars($v) ?></span>
+  <div class="kv-card">
+    <span class="kv-card-key"><?= htmlspecialchars($k) ?></span>
+    <span class="kv-card-val <?= $cls ?>"><?= htmlspecialchars($v) ?></span>
   </div>
   <?php endforeach; ?>
 </div>
